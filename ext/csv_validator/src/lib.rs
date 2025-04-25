@@ -1,14 +1,115 @@
 use magnus::{function, prelude::*, Error, Ruby, RArray, Symbol, Value, RHash};
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::path::Path;
-use std::io::{Write, BufWriter};
+use std::io::{Write, BufWriter, Read, BufReader};
 use url::Url;
+use tempfile::NamedTempFile;
+
+// Define the chunk size threshold for processing CSV files (100MB)
+const CHUNK_SIZE_BYTES: usize = 100 * 1024 * 1024;
 
 // Define our validation rule types
 enum ValidationRule {
     Ignore,       // Ignore this column
     Url,          // Validate as URL
     Protocol,     // Check if it contains ://
+}
+
+// Helper function to write a chunk of records to a temporary file in reverse order
+fn write_chunk_to_temp_file(chunk: &[csv::StringRecord]) -> Result<NamedTempFile, Error> {
+    let temp_file = NamedTempFile::new().map_err(|e| {
+        Error::new(magnus::exception::runtime_error(), 
+            format!("Failed to create temporary file: {}", e))
+    })?;
+    
+    {
+        // Write the reversed chunk to the temp file within a scope
+        let mut writer = csv::WriterBuilder::new()
+            .has_headers(false)  // Don't write headers for each chunk
+            .from_writer(&temp_file);
+        
+        // Write records in reverse order to the temp file
+        for record in chunk.iter().rev() {
+            writer.write_record(record).map_err(|e| {
+                Error::new(magnus::exception::runtime_error(), 
+                    format!("Failed to write record to temp file: {}", e))
+            })?;
+        }
+        
+        writer.flush().map_err(|e| {
+            Error::new(magnus::exception::runtime_error(), 
+                format!("Failed to flush temp file: {}", e))
+        })?;
+    } // End of writer scope
+    
+    Ok(temp_file)
+}
+
+// Helper function to create the final reversed output file from temp files
+fn create_reversed_output(
+    output_path: &str, 
+    headers: &[String], 
+    temp_files: &[NamedTempFile]
+) -> Result<(), Error> {
+    // Create the final reversed output file
+    let output_file = File::create(output_path).map_err(|e| {
+        Error::new(magnus::exception::runtime_error(), 
+            format!("Failed to create reversed output file: {}", e))
+    })?;
+    
+    // Write headers to the output file
+    let mut final_writer = csv::WriterBuilder::new()
+        .has_headers(true)
+        .from_writer(&output_file);
+    
+    final_writer.write_record(headers).map_err(|e| {
+        Error::new(magnus::exception::runtime_error(), 
+            format!("Failed to write headers to reversed output: {}", e))
+    })?;
+    
+    final_writer.flush().map_err(|e| {
+        Error::new(magnus::exception::runtime_error(), 
+            format!("Failed to flush reversed output: {}", e))
+    })?;
+    
+    // Drop the final_writer to ensure it's closed
+    drop(final_writer);
+    
+    // Open the final output file for appending
+    let mut append_file = OpenOptions::new()
+        .append(true)
+        .open(output_path)
+        .map_err(|e| {
+            Error::new(magnus::exception::runtime_error(), 
+                format!("Failed to open reversed output file for appending: {}", e))
+        })?;
+    
+    // Concatenate temp files in reverse order (latest chunk first)
+    for temp_file in temp_files.iter().rev() {
+        let mut reader = BufReader::new(temp_file.reopen().map_err(|e| {
+            Error::new(magnus::exception::runtime_error(), 
+                format!("Failed to reopen temp file: {}", e))
+        })?);
+        
+        let mut buffer = Vec::new();
+        reader.read_to_end(&mut buffer).map_err(|e| {
+            Error::new(magnus::exception::runtime_error(), 
+                format!("Failed to read temp file: {}", e))
+        })?;
+        
+        append_file.write_all(&buffer).map_err(|e| {
+            Error::new(magnus::exception::runtime_error(), 
+                format!("Failed to append temp file data: {}", e))
+        })?;
+    }
+    
+    // Ensure everything is written
+    append_file.flush().map_err(|e| {
+        Error::new(magnus::exception::runtime_error(), 
+            format!("Failed to flush reversed output file: {}", e))
+    })?;
+    
+    Ok(())
 }
 
 // Parse Ruby validation pattern to Rust validation rules
@@ -39,7 +140,7 @@ fn parse_validation_pattern(pattern: &RArray) -> Result<Vec<ValidationRule>, Err
 }
 
 // Validate a CSV file with the given pattern
-fn validate_csv(file_path: String, pattern: RArray, error_log_path: Option<String>) -> Result<RHash, Error> {
+fn validate_csv(file_path: String, pattern: RArray, error_log_path: Option<String>, reversed_output_path: Option<String>) -> Result<RHash, Error> {
     // Parse the validation pattern
     let rules = parse_validation_pattern(&pattern)?;
     
@@ -90,6 +191,12 @@ fn validate_csv(file_path: String, pattern: RArray, error_log_path: Option<Strin
         }
     };
     
+    // Set up chunked processing for reversed output
+    let need_reversed_output = reversed_output_path.is_some();
+    let mut temp_files: Vec<NamedTempFile> = Vec::new();
+    let mut current_chunk: Vec<csv::StringRecord> = Vec::new();
+    let mut current_chunk_size: usize = 0;  // Track approximate size of current chunk in bytes
+    
     // Tracking variables
     let mut row_count = 0;
     let mut errors: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
@@ -99,6 +206,26 @@ fn validate_csv(file_path: String, pattern: RArray, error_log_path: Option<Strin
         let record = record_result.map_err(|e| {
             Error::new(magnus::exception::runtime_error(), format!("CSV error at row {}: {}", row_idx + 1, e))
         })?;
+        
+        // Store the record for reversed output if needed
+        if need_reversed_output {
+            // Estimate the size of this record in bytes
+            let record_size = record.iter().map(|field| field.len()).sum::<usize>() + record.len();
+            current_chunk.push(record.clone());
+            current_chunk_size += record_size;
+            
+            // If we've reached the chunk size threshold, process this chunk
+            if current_chunk_size >= CHUNK_SIZE_BYTES {
+                let temp_file = write_chunk_to_temp_file(&current_chunk)?;
+                
+                // Store the temp file for later use
+                temp_files.push(temp_file);
+                
+                // Clear the current chunk for the next set of records
+                current_chunk.clear();
+                current_chunk_size = 0;
+            }
+        }
         
         row_count += 1;
         
@@ -209,6 +336,18 @@ fn validate_csv(file_path: String, pattern: RArray, error_log_path: Option<Strin
         })?;
     }
     
+    // If we need to write a reversed output, handle any remaining records and combine temp files
+    if let Some(reversed_path) = reversed_output_path {
+        // Process any remaining records in the last chunk
+        if !current_chunk.is_empty() {
+            let temp_file = write_chunk_to_temp_file(&current_chunk)?;
+            temp_files.push(temp_file);
+        }
+        
+        // Create the final reversed output file
+        create_reversed_output(&reversed_path, &headers, &temp_files)?;
+    }
+    
     // Create a Ruby hash for the result
     let result = RHash::new();
     result.aset(Symbol::new("row_count"), row_count)?;
@@ -231,6 +370,6 @@ fn validate_csv(file_path: String, pattern: RArray, error_log_path: Option<Strin
 #[magnus::init]
 fn init(ruby: &Ruby) -> Result<(), Error> {
     let module = ruby.define_module("CsvValidator")?;
-    module.define_singleton_method("_validate", function!(validate_csv, 3))?;
+    module.define_singleton_method("_validate", function!(validate_csv, 4))?;
     Ok(())
 }

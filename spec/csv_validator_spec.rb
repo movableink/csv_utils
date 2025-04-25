@@ -3,6 +3,7 @@
 require "csv_validator"
 require "tempfile"
 require "set"
+require "csv"
 
 RSpec.describe CsvValidator do
   it "has a version number" do
@@ -267,6 +268,51 @@ RSpec.describe CsvValidator do
       # Should return logs array with header information
       expect(logs.size).to be > 0
       expect(logs[0]).to eq("Column,Expected Header,Actual Header\n")
+    end
+  end
+
+  describe "Reversed output" do
+    it "creates a reversed CSV file" do
+      # Create a temp CSV file with multiple rows
+      temp_csv = Tempfile.new(["original", ".csv"])
+      temp_csv.write([
+        "id,name,url",
+        "1,First,https://example.com/first",
+        "2,Second,https://example.com/second",
+        "3,Third,https://example.com/third"
+      ].join("\n"))
+      temp_csv.close
+      
+      # Create a temp file for the reversed output
+      reversed_csv = Tempfile.new(["reversed", ".csv"])
+      reversed_csv.close
+      
+      # Create validator with reversed output path
+      validator = CsvValidator::Validator.new([nil, nil, :url], reversed_output_path: reversed_csv.path)
+      
+      # Validate rows
+      validator.validate_rows(temp_csv.path)
+      
+      # Read the reversed file
+      rows = CSV.read(reversed_csv.path, headers: true)
+      
+      # Verify headers
+      expect(rows.headers).to eq(["id", "name", "url"])
+      
+      # Verify the rows are reversed (excluding header)
+      expect(rows[0]["id"]).to eq("3")
+      expect(rows[0]["name"]).to eq("Third")
+      expect(rows[0]["url"]).to eq("https://example.com/third")
+      
+      expect(rows[1]["id"]).to eq("2")
+      expect(rows[1]["name"]).to eq("Second")
+      
+      expect(rows[2]["id"]).to eq("1")
+      expect(rows[2]["name"]).to eq("First")
+      
+      # Clean up
+      temp_csv.unlink
+      reversed_csv.unlink
     end
   end
 end

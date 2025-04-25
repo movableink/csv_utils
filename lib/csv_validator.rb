@@ -9,12 +9,13 @@ module CsvValidator
   
   # Result class to hold validation results
   class ValidationResult
-    attr_reader :row_count, :error_summary, :error_logs_path
+    attr_reader :row_count, :error_summary, :error_logs_path, :reversed_output_path
     
-    def initialize(row_count = 0, errors = {}, error_logs_path = nil)
+    def initialize(row_count = 0, errors = {}, error_logs_path = nil, reversed_output_path = nil)
       @row_count = row_count.is_a?(Hash) ? row_count[:row_count] : row_count
       @error_summary = errors
       @error_logs_path = error_logs_path
+      @reversed_output_path = reversed_output_path
     end
     
     def valid?
@@ -27,14 +28,17 @@ module CsvValidator
   end
 
   class Validator
-    def initialize(pattern, error_logs_path: nil)
+    attr_reader :reversed_output_path
+    
+    def initialize(pattern, error_logs_path: nil, reversed_output_path: nil)
       @pattern = pattern
       @error_logs_path = error_logs_path
+      @reversed_output_path = reversed_output_path
       @result = nil
     end
 
     def validate_rows(file_path)
-      @result = CsvValidator._validate(file_path, @pattern, @error_logs_path)
+      @result = CsvValidator._validate(file_path, @pattern, @error_logs_path, @reversed_output_path)
       @result
     end
 
@@ -81,10 +85,11 @@ module CsvValidator
   # @param file_path [String] Path to the CSV file to validate
   # @param pattern [Array] Array of validation rules
   # @param error_log_path [String, nil] Optional path to write error log
+  # @param reversed_output_path [String, nil] Optional path to write reversed CSV file
   # @return [ValidationResult] The validation result
-  def self.validate(file_path, pattern, error_log_path = nil)
-    validator = Validator.new(pattern, error_logs_path: error_log_path)
+  def self.validate(file_path, pattern, error_log_path = nil, reversed_output_path = nil)
+    validator = Validator.new(pattern, error_logs_path: error_log_path, reversed_output_path: reversed_output_path)
     result = validator.validate_rows(file_path)
-    ValidationResult.new(result[:row_count], result[:errors], error_log_path)
+    ValidationResult.new(result[:row_count], result[:errors], error_log_path, reversed_output_path)
   end
 end

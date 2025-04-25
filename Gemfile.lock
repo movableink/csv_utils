@@ -8,6 +8,7 @@ GEM
   remote: https://rubygems.org/
   specs:
     ast (2.4.3)
+    csv (3.3.4)
     diff-lcs (1.6.1)
     json (2.11.2)
     language_server-protocol (3.17.0.4)
@@ -63,6 +64,7 @@ PLATFORMS
   ruby
 
 DEPENDENCIES
+  csv (~> 3.3)
   csv_validator!
   rake (~> 13.0)
   rake-compiler
