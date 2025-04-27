@@ -6,7 +6,7 @@ use std::{
     cell::RefCell,
 };
 use serde::{Serialize, Deserialize};
-use bincode::{serialize_into, deserialize_from};
+use bincode;
 use tempfile::NamedTempFile;
 use magnus::{prelude::*, Error, method, function, Ruby, Symbol, RHash, RArray, Value};
 use sha1::{Sha1, Digest};
@@ -451,7 +451,6 @@ impl Sorter {
             if run_length > inner.max_targeting_key_rows {
                 // We will never serve more than MAX_RUN_LENGTH rows for a given key, so
                 // may as well not emit them
-                println!("targeting key {} with data {} has {} rows", target_key, record.join(","), run_length);
                 continue;
             }
             
