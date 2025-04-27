@@ -87,30 +87,32 @@ impl SorterInner {
     
     // Create a sorted run file from current batch
     fn make_run(&mut self) -> std::io::Result<Option<NamedTempFile>> {
-      if self.current_batch.is_empty() {
-          return Ok(None);
-      }
-  
-      self.current_batch.sort_unstable();
-      let temp = NamedTempFile::new()?;
-      {
-          let mut w = BufWriter::new(&temp);
-          for (key, rec) in &self.current_batch {
-              let sort_record = SortRecord {
-                  key_hash: key.hash,
-                  key: key.value.clone(),
-                  record: rec.clone(),
-              };
-              serialize_into(&mut w, &sort_record)
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-          }
-          w.flush()?;
-      }
-  
-      self.current_batch.clear();
-      self.current_buffer_size = 0;
-      Ok(Some(temp))
-  }
+        if self.current_batch.is_empty() {
+            return Ok(None);
+        }
+
+        self.current_batch.sort_unstable();
+        let temp = NamedTempFile::new()?;
+        {
+            let mut w = BufWriter::new(&temp);
+            for (key, rec) in &self.current_batch {
+                let sort_record = SortRecord {
+                    key_hash: key.hash,
+                    key: key.value.clone(),
+                    record: rec.clone(),
+                };
+                let bytes = bincode::serialize(&sort_record)
+                    .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+                w.write_all(&(bytes.len() as u32).to_le_bytes())?;
+                w.write_all(&bytes)?;
+            }
+            w.flush()?;
+        }
+
+        self.current_batch.clear();
+        self.current_buffer_size = 0;
+        Ok(Some(temp))
+    }
     
     // Merge all temporary run files to the output file
     fn merge_runs_to_file(&mut self) -> Result<usize, std::io::Error> {
@@ -126,12 +128,14 @@ impl SorterInner {
                 let mut reader = BufReader::new(file);
                 
                 // Try to read first record
-                match deserialize_from::<_, SortRecord>(&mut reader) {
-                    Ok(record) => {
-                        readers.push((Some(record), reader));
-                    },
-                    Err(_) => {
-                        eprintln!("Error reading from run file");
+                let mut len_bytes = [0u8; 4];
+                if reader.read_exact(&mut len_bytes).is_ok() {
+                    let len = u32::from_le_bytes(len_bytes) as usize;
+                    let mut bytes = vec![0u8; len];
+                    if reader.read_exact(&mut bytes).is_ok() {
+                        if let Ok(record) = bincode::deserialize::<SortRecord>(&bytes) {
+                            readers.push((Some(record), reader));
+                        }
                     }
                 }
             }
@@ -148,37 +152,45 @@ impl SorterInner {
             }
         }
         
-        // Process records in sorted order and collect them
-        let mut records = Vec::new();
+        // Create output file
+        self.output_file = NamedTempFile::new()?;
+        let mut w = BufWriter::new(&self.output_file);
+        let mut count = 0;
+        
+        // Process records in sorted order and write them directly
         while let Some(std::cmp::Reverse((_, _, src_idx))) = heap.pop() {
             if let Some((record, reader)) = readers.get_mut(src_idx) {
                 if let Some(rec) = record.take() {
-                    // Add record to our collection
-                    records.push(rec.record);
+                    // Write record directly
+                    let bytes = bincode::serialize(&rec.record)
+                        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+                    w.write_all(&(bytes.len() as u32).to_le_bytes())?;
+                    w.write_all(&bytes)?;
+                    count += 1;
                     
                     // Read next record from this source
-                    match deserialize_from::<_, SortRecord>(reader) {
-                        Ok(next_rec) => {
-                            // Add next record to the heap
-                            heap.push(std::cmp::Reverse((next_rec.key_hash, next_rec.key.clone(), src_idx)));
-                            *record = Some(next_rec);
-                        },
-                        Err(_) => {
-                            // No more records from this source
-                            *record = None;
+                    let mut len_bytes = [0u8; 4];
+                    if reader.read_exact(&mut len_bytes).is_ok() {
+                        let len = u32::from_le_bytes(len_bytes) as usize;
+                        let mut bytes = vec![0u8; len];
+                        if reader.read_exact(&mut bytes).is_ok() {
+                            if let Ok(next_rec) = bincode::deserialize::<SortRecord>(&bytes) {
+                                // Add next record to the heap
+                                heap.push(std::cmp::Reverse((next_rec.key_hash, next_rec.key.clone(), src_idx)));
+                                *record = Some(next_rec);
+                            }
                         }
                     }
                 }
             }
         }
         
-        // Write all records using write_records
-        let total_rows = self.write_records(records)?;
+        w.flush()?;
         
         // Clear temp files
         self.temp_files.clear();
         
-        Ok(total_rows)
+        Ok(count)
     }
     
     // In-memory sort and write to output file
