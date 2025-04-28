@@ -1,5 +1,5 @@
 [package]
-name = "csv_validator"
+name = "csv_utils"
 version = "0.1.0"
 edition = "2021"
 authors = ["Michael Nutt <michael@nuttnet.net>"]

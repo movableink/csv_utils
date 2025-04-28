@@ -1,8 +1,8 @@
 require "set"
 require_relative "error"
-require_relative "csv_validator"
+require_relative "csv_utils"
 
-module CsvValidator
+module CsvUtils
   class Validator
     attr_reader :reversed_output_path
     
@@ -14,27 +14,27 @@ module CsvValidator
     end
 
     def validate_rows(file_path)
-      @result = CsvValidator._validate(file_path, @pattern, @error_logs_path, @reversed_output_path)
+      @result = CsvUtils._validate(file_path, @pattern, @error_logs_path, @reversed_output_path)
       @result
     end
 
     def error_summary
-      raise CsvValidator::Error, "No result" unless @result
+      raise CsvUtils::Error, "No result" unless @result
       @result[:errors]
     end
 
     def error_count
-      raise CsvValidator::Error, "No result" unless @result
+      raise CsvUtils::Error, "No result" unless @result
       @result[:errors].values.sum
     end
 
     def valid?
-      raise CsvValidator::Error, "No result" unless @result
+      raise CsvUtils::Error, "No result" unless @result
       @result[:errors].empty?
     end
 
     def row_count
-      raise CsvValidator::Error, "No result" unless @result
+      raise CsvUtils::Error, "No result" unless @result
       @result[:row_count]
     end
 

@@ -1,10 +1,10 @@
 # frozen_string_literal: true
 
-require "csv_validator"
+require "csv_utils"
 require "tempfile"
 require "csv"
 
-RSpec.describe CsvValidator::Generator do
+RSpec.describe CsvUtils::Generator do
   let(:input_data) {
     [
       "id,name,email,timestamp",
@@ -42,7 +42,7 @@ RSpec.describe CsvValidator::Generator do
   describe "CSV deduplication" do
     it "deduplicates records with the same key" do
       # Run deduplication using the first column (id) as the key
-      result = CsvValidator::Generator.dedupe_csv(input_path, output_path, [0], max_records_per_key: 1)
+      result = CsvUtils::Generator.dedupe_csv(input_path, output_path, [0], max_records_per_key: 1)
 
       # Should have 3 rows (one per unique id), with the latest versions
       expect(rows.size).to eq(3)
@@ -71,7 +71,7 @@ RSpec.describe CsvValidator::Generator do
 
       it "sorts properly" do        
         # Run deduplication using the first two columns (region, product) as compound key
-        result = CsvValidator::Generator.dedupe_csv(input_path, output_path, [0, 1], max_records_per_key: 1)
+        result = CsvUtils::Generator.dedupe_csv(input_path, output_path, [0, 1], max_records_per_key: 1)
         
         # Should have 4 unique combinations of region+product
         expect(rows.size).to eq(4)
@@ -96,7 +96,7 @@ RSpec.describe CsvValidator::Generator do
 
       it "limits to 200 records per key" do
         # Run deduplication
-        result = CsvValidator::Generator.dedupe_csv(input_path, output_path, [0])
+        result = CsvUtils::Generator.dedupe_csv(input_path, output_path, [0])
         
         # Should have exactly 200 records (the limit)
         expect(rows.size).to eq(200)
@@ -118,7 +118,7 @@ RSpec.describe CsvValidator::Generator do
 
       it "returns an empty file" do
         # Run deduplication
-        result = CsvValidator::Generator.dedupe_csv(input_path, output_path, [0])
+        result = CsvUtils::Generator.dedupe_csv(input_path, output_path, [0])
         
         # Should have 0 data rows
         expect(rows.size).to eq(0)
@@ -133,7 +133,7 @@ RSpec.describe CsvValidator::Generator do
       it "throws an error" do
         # Run deduplication
         expect {
-          CsvValidator::Generator.dedupe_csv(input_path, output_path, [0])
+          CsvUtils::Generator.dedupe_csv(input_path, output_path, [0])
         }.to raise_error("No headers found in input file")
       end
     end
@@ -149,7 +149,7 @@ RSpec.describe CsvValidator::Generator do
 
       it "handles large files by processing in chunks" do
         # Run deduplication
-        result = CsvValidator::Generator.dedupe_csv(input_path, output_path, [0], buffer_size: 10_000)
+        result = CsvUtils::Generator.dedupe_csv(input_path, output_path, [0], buffer_size: 10_000)
         expect(result[:records_written]).to eq(50_000)
         expect(result[:run_files]).to eq(5)
         

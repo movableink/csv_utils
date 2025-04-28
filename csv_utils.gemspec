@@ -1,16 +1,16 @@
 # frozen_string_literal: true
 
-require_relative "lib/csv_validator/version"
+require_relative "lib/csv_utils/version"
 
 Gem::Specification.new do |spec|
-  spec.name = "csv_validator"
-  spec.version = CsvValidator::VERSION
+  spec.name = "csv_utils"
+  spec.version = CsvUtils::VERSION
   spec.authors = ["Michael Nutt"]
   spec.email = ["michael@nuttnet.net"]
 
   spec.summary = "A CSV validator using Rust"
   spec.description = "A CSV validation library implemented in Rust"
-  spec.homepage = "https://github.com/movableink/csv_validator"
+  spec.homepage = "https://github.com/movableink/csv_utils"
   spec.license = "MIT"
   spec.required_ruby_version = ">= 3.1.0"
   spec.required_rubygems_version = ">= 3.3.11"
@@ -18,8 +18,8 @@ Gem::Specification.new do |spec|
   spec.metadata["allowed_push_host"] = "https://rubygems.org"
 
   spec.metadata["homepage_uri"] = spec.homepage
-  spec.metadata["source_code_uri"] = "https://github.com/movableink/csv_validator"
-  spec.metadata["changelog_uri"] = "https://github.com/movableink/csv_validator/blob/main/CHANGELOG.md"
+  spec.metadata["source_code_uri"] = "https://github.com/movableink/csv_utils"
+  spec.metadata["changelog_uri"] = "https://github.com/movableink/csv_utils/blob/main/CHANGELOG.md"
 
   # Specify which files should be added to the gem when it is released.
   # The `git ls-files -z` loads the files in the RubyGem that have been added into git.
@@ -33,7 +33,7 @@ Gem::Specification.new do |spec|
   spec.bindir = "exe"
   spec.executables = spec.files.grep(%r{\Aexe/}) { |f| File.basename(f) }
   spec.require_paths = ["lib"]
-  spec.extensions = ["ext/csv_validator/extconf.rb"]
+  spec.extensions = ["ext/csv_utils/extconf.rb"]
 
   # Uncomment to register a new dependency of your gem
   # spec.add_dependency "example-gem", "~> 1.0"

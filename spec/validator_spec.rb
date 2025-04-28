@@ -1,15 +1,11 @@
 # frozen_string_literal: true
 
-require "csv_validator"
+require "csv_utils"
 require "tempfile"
 require "set"
 require "csv"
 
-RSpec.describe CsvValidator do
-  it "has a version number" do
-    expect(CsvValidator::VERSION).not_to be nil
-  end
-
+RSpec.describe CsvUtils::Validator do
   describe "URL validation" do
     it "validates valid URLs" do
       # Create a temp CSV file with valid URLs
@@ -24,7 +20,7 @@ RSpec.describe CsvValidator do
       # Create a pattern with URL validation for the first column
       pattern = [:url]
       
-      validator = CsvValidator::Validator.new(pattern)
+      validator = CsvUtils::Validator.new(pattern)
       validator.validate_rows(temp_csv.path)
       
       # Expect no errors
@@ -49,7 +45,7 @@ RSpec.describe CsvValidator do
       pattern = [:url]
       
       # Expect validation to fail
-      validator = CsvValidator::Validator.new(pattern)
+      validator = CsvUtils::Validator.new(pattern)
       validator.validate_rows(temp_csv.path)
       
       expect(validator.valid?).to eq(false)
@@ -76,7 +72,7 @@ RSpec.describe CsvValidator do
       pattern = [:protocol]
       
       # Expect no errors
-      validator = CsvValidator::Validator.new(pattern)
+      validator = CsvUtils::Validator.new(pattern)
       validator.validate_rows(temp_csv.path)
       
       expect(validator.valid?).to eq(true)
@@ -100,7 +96,7 @@ RSpec.describe CsvValidator do
       pattern = [:protocol]
       
       # Expect validation to fail
-      validator = CsvValidator::Validator.new(pattern)
+      validator = CsvUtils::Validator.new(pattern)
       validator.validate_rows(temp_csv.path)
       
       expect(validator.valid?).to eq(false)
@@ -126,7 +122,7 @@ RSpec.describe CsvValidator do
       pattern = [nil]
       
       # Expect no errors
-      validator = CsvValidator::Validator.new(pattern)
+      validator = CsvUtils::Validator.new(pattern)
       validator.validate_rows(temp_csv.path)
       
       expect(validator.valid?).to eq(true)
@@ -151,7 +147,7 @@ RSpec.describe CsvValidator do
       pattern = [:url, :url, nil, :protocol]
 
       # Expect no errors
-      validator = CsvValidator::Validator.new(pattern)
+      validator = CsvUtils::Validator.new(pattern)
       validator.validate_rows(temp_csv.path)
       
       expect(validator.valid?).to eq(true)
@@ -174,7 +170,7 @@ RSpec.describe CsvValidator do
       pattern = [:url, :url, nil, :protocol]
 
       # Expect multiple errors
-      validator = CsvValidator::Validator.new(pattern)
+      validator = CsvUtils::Validator.new(pattern)
       validator.validate_rows(temp_csv.path)
       
       expect(validator.valid?).to eq(false)
@@ -204,7 +200,7 @@ RSpec.describe CsvValidator do
       error_log.close
 
       # Validate with error logging
-      validator = CsvValidator::Validator.new(pattern, error_logs_path: error_log.path)
+      validator = CsvUtils::Validator.new(pattern, error_logs_path: error_log.path)
       validator.validate_rows(temp_csv.path)
       
       expect(validator.valid?).to eq(false)
@@ -238,7 +234,7 @@ RSpec.describe CsvValidator do
       temp_csv.close
       
       # Create validator instance
-      validator = CsvValidator::Validator.new([:url, nil])
+      validator = CsvUtils::Validator.new([:url, nil])
       
       # Validate rows
       validator.validate_rows(temp_csv.path)
@@ -253,7 +249,7 @@ RSpec.describe CsvValidator do
       current_headers = ["id", "name", "email"]
       incoming_headers = ["id", "name", "email", "extra"]
       
-      validator = CsvValidator::Validator.new([])
+      validator = CsvUtils::Validator.new([])
       logs = validator.validate_headers(current: current_headers, incoming: incoming_headers)
       
       # All required headers are present, so should return empty array
@@ -288,7 +284,7 @@ RSpec.describe CsvValidator do
       reversed_csv.close
       
       # Create validator with reversed output path
-      validator = CsvValidator::Validator.new([nil, nil, :url], reversed_output_path: reversed_csv.path)
+      validator = CsvUtils::Validator.new([nil, nil, :url], reversed_output_path: reversed_csv.path)
       
       # Validate rows
       validator.validate_rows(temp_csv.path)

@@ -2,7 +2,7 @@
 
 source "https://rubygems.org"
 
-# Specify your gem's dependencies in csv_validator.gemspec
+# Specify your gem's dependencies in csv_utils.gemspec
 gemspec
 
 gem "rake", "~> 13.0"

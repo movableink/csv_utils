@@ -1,7 +1,7 @@
 PATH
   remote: .
   specs:
-    csv_validator (0.1.0)
+    csv_utils (0.1.0)
       rb_sys (~> 0.9.91)
 
 GEM
@@ -65,7 +65,7 @@ PLATFORMS
 
 DEPENDENCIES
   csv (~> 3.3)
-  csv_validator!
+  csv_utils!
   rake (~> 13.0)
   rake-compiler
   rspec (~> 3.0)

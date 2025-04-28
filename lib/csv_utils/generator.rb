@@ -3,9 +3,9 @@
 require "set"
 require "fileutils"
 require_relative "error"
-require_relative "csv_validator"
+require_relative "csv_utils"
 
-module CsvValidator
+module CsvUtils
   class Generator
     # Default values
     DEFAULT_MAX_RECORDS_PER_KEY = 200
@@ -37,7 +37,7 @@ module CsvValidator
       
       # Call the native method
       begin
-        CsvValidator._dedupe(abs_input_path, abs_output_path, key_columns, max_records, buffer_size_mb)
+        CsvUtils._dedupe(abs_input_path, abs_output_path, key_columns, max_records, buffer_size_mb)
       rescue RuntimeError => e
         if e.message == "No records found in input file" && 
            File.size?(abs_input_path) <= 5 # Only header or empty file

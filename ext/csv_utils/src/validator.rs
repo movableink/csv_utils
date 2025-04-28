@@ -1,13 +1,9 @@
-use magnus::{function, prelude::*, Error, Ruby, RArray, Symbol, Value, RHash};
+use magnus::{function, prelude::*, Error, Ruby, RArray, Symbol, Value, RHash, RModule};
 use std::fs::{File, OpenOptions};
 use std::path::Path;
 use std::io::{Write, BufWriter, Read, BufReader};
 use url::Url;
 use tempfile::NamedTempFile;
-
-// Create a module for the generator functionality
-mod generator;
-mod sorter;
 
 // Define the chunk size threshold for processing CSV files (100MB)
 const CHUNK_SIZE_BYTES: usize = 100 * 1024 * 1024;
@@ -371,14 +367,9 @@ fn validate_csv(file_path: String, pattern: RArray, error_log_path: Option<Strin
     Ok(result)
 }
 
-#[magnus::init]
-fn init(ruby: &Ruby) -> Result<(), Error> {
-    let module = ruby.define_module("CsvValidator")?;
-    module.define_singleton_method("_validate", function!(validate_csv, 4))?;
-    module.define_singleton_method("_dedupe", function!(generator::dedupe_csv, 5))?;
-    
-    // Register the Sorter class
-    sorter::register(ruby)?;
-    
+pub fn register(ruby: &Ruby, module: &RModule) -> Result<(), Error> {
+    let class = module.define_class("Validator", ruby.class_object())?;
+    class.define_singleton_method("_validate", function!(validate_csv, 4))?;
+
     Ok(())
 }

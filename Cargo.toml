@@ -3,5 +3,5 @@
 # in the ext/ directory.
 
 [workspace]
-members = ["./ext/csv_validator"]
+members = ["./ext/csv_utils"]
 resolver = "2"

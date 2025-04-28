@@ -122,7 +122,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "csv_validator"
+name = "csv_utils"
 version = "0.1.0"
 dependencies = [
  "bincode",
