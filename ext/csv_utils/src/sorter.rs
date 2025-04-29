@@ -19,6 +19,7 @@ pub struct Sorter {
 
 // Inner state that can be mutated through RefCell
 struct SorterInner {
+    source_id: String,
     key_columns: Vec<usize>,
     current_batch: Vec<(KeyData, Vec<String>)>,
     buffer_size_bytes: usize,
@@ -54,6 +55,8 @@ impl SorterInner {
     // Generate a composite key from row values using SHA1, joined by commas
     fn generate_targeting_key(&self, row: &[String]) -> String {
         let mut hasher = Sha1::new();
+        hasher.update(self.source_id.as_bytes());
+        hasher.update(b",");
         
         for (i, &col) in self.key_columns.iter().enumerate() {
             if let Some(val) = row.get(col) {
@@ -267,7 +270,7 @@ impl SorterInner {
 
 impl Sorter {
     // Create a new Sorter - helper function for constructor
-    pub fn new_impl(key_columns: Vec<usize>, buffer_size_mb: usize) -> Result<Self, Error> {
+    pub fn new_impl(source_id: String, key_columns: Vec<usize>, buffer_size_mb: usize) -> Result<Self, Error> {
         const DEFAULT_MAX_TARGETING_KEY_ROWS: usize = 200;
 
         let buffer_size_bytes = buffer_size_mb * 1024 * 1024;
@@ -285,6 +288,7 @@ impl Sorter {
         
         Ok(Self { 
             inner: RefCell::new(SorterInner {
+                source_id,
                 key_columns,
                 current_batch: Vec::new(),
                 buffer_size_bytes,
@@ -300,8 +304,8 @@ impl Sorter {
     }
     
     // Ruby-callable constructor
-    pub fn new(key_columns: Vec<usize>, buffer_size_mb: usize) -> Result<Self, Error> {
-        Self::new_impl(key_columns, buffer_size_mb)
+    pub fn new(source_id: String, key_columns: Vec<usize>, buffer_size_mb: usize) -> Result<Self, Error> {
+        Self::new_impl(source_id, key_columns, buffer_size_mb)
     }
 
     pub fn set_validation_schema(&self, schema: RArray) -> Result<(), Error> {
@@ -522,7 +526,7 @@ impl Sorter {
 
 pub fn register(ruby: &Ruby, module: &RModule) -> Result<(), Error> {
     let class = module.define_class("Sorter", ruby.class_object())?;
-    class.define_singleton_method("new", function!(Sorter::new, 2))?;
+    class.define_singleton_method("new", function!(Sorter::new, 3))?;
     class.define_method("set_validation_schema", method!(Sorter::set_validation_schema, 1))?;
     class.define_method("add_row", method!(Sorter::add_row, 1))?;
     class.define_method("sort!", method!(Sorter::sort, 0))?;
