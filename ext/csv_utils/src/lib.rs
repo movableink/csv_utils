@@ -6,8 +6,9 @@ mod sorter;
 
 #[magnus::init]
 fn init(ruby: &Ruby) -> Result<(), Error> {
-    // Register the Sorter class
-    sorter::register(ruby)?;
-    validator::register(ruby)?;
+    let module = ruby.define_module("CsvUtils")?;
+
+    sorter::register(ruby, &module)?;
+    validator::register(ruby, &module)?;
     Ok(())
 }

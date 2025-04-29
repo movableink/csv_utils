@@ -11,7 +11,7 @@ use tempfile::NamedTempFile;
 use magnus::{prelude::*, Error, method, function, Ruby, Symbol, RHash, RArray, Value, RModule};
 use sha1::{Sha1, Digest};
 
-#[magnus::wrap(class = "Sorter")]
+#[magnus::wrap(class = "CsvUtils::Sorter")]
 pub struct Sorter {
     inner: RefCell<SorterInner>,
 }
@@ -481,8 +481,8 @@ impl Sorter {
     }
 }
 
-pub fn register(ruby: &Ruby) -> Result<(), Error> {
-    let class = ruby.define_class("CsvUtilsSorter", ruby.class_object())?;
+pub fn register(ruby: &Ruby, module: &RModule) -> Result<(), Error> {
+    let class = module.define_class("Sorter", ruby.class_object())?;
     class.define_singleton_method("new", function!(Sorter::new, 2))?;
     class.define_method("add_row", method!(Sorter::add_row, 1))?;
     class.define_method("sort!", method!(Sorter::sort, 0))?;
