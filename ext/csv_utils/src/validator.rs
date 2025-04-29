@@ -16,7 +16,6 @@ impl fmt::Display for ValidationError {
 
 impl StdError for ValidationError {}
 
-// Define our validation rule types
 enum ValidationRule {
     Ignore,       // Ignore this column
     Url,          // Validate as URL

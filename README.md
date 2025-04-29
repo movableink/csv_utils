@@ -16,7 +16,7 @@ A high-performance CSV processing library for Ruby, providing efficient sorting,
 Add this line to your application's Gemfile:
 
 ```ruby
-gem 'csv_utils', git: "https://github.com/movableink/csv_validator"
+gem 'csv_utils', git: "https://github.com/movableink/csv_utils"
 ```
 
 And then execute:

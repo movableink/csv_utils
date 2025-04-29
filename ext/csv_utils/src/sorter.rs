@@ -12,6 +12,8 @@ use magnus::{prelude::*, Error, method, function, Ruby, Symbol, RHash, RArray, V
 use sha1::{Sha1, Digest};
 use crate::validator::Validator;
 
+const DEFAULT_MAX_TARGETING_KEY_ROWS: usize = 200;
+
 #[magnus::wrap(class = "CsvUtils::Sorter")]
 pub struct Sorter {
     inner: RefCell<SorterInner>,
@@ -44,7 +46,6 @@ struct SortRecord {
     record: Vec<String>,
 }
 
-// Key data for faster comparison
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct KeyData {
     hash: u64,
@@ -52,7 +53,7 @@ struct KeyData {
 }
 
 impl SorterInner {
-    // Generate a composite key from row values using SHA1, joined by commas
+    // Generate a composite key from source_id + row values using SHA1, joined by commas
     fn generate_targeting_key(&self, row: &[String]) -> String {
         let mut hasher = Sha1::new();
         hasher.update(self.source_id.as_bytes());
@@ -71,19 +72,14 @@ impl SorterInner {
         format!("{:x}", digest)
     }
 
-    // Hash a key for faster comparisons
     fn hash_key(key: &str) -> u64 {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         key.hash(&mut hasher);
         hasher.finish()
     }
     
-    // Estimate size of a row in bytes
     fn estimate_row_size(key: &KeyData, row: &[String]) -> usize {
-        // Estimate key size
         let key_size = key.value.len() + std::mem::size_of::<KeyData>();
-        
-        // Estimate row size
         let row_size: usize = row.iter()
             .map(|s| s.len() + std::mem::size_of::<String>())
             .sum();
@@ -91,7 +87,6 @@ impl SorterInner {
         key_size + row_size
     }
     
-    // Create a sorted run file from current batch
     fn make_run(&mut self) -> std::io::Result<Option<NamedTempFile>> {
         if self.current_batch.is_empty() {
             return Ok(None);
@@ -120,20 +115,16 @@ impl SorterInner {
         Ok(Some(temp))
     }
     
-    // Merge all temporary run files to the output file
     fn merge_runs_to_file(&mut self) -> Result<usize, std::io::Error> {
-        // If no temp files, we can't merge
         if self.temp_files.is_empty() {
             return Ok(0);
         }
         
-        // Create readers for each run file
         let mut readers = Vec::new();
         for temp_file in &self.temp_files {
             if let Ok(file) = File::open(temp_file.path()) {
                 let mut reader = BufReader::new(file);
                 
-                // Try to read first record
                 let mut len_bytes = [0u8; 4];
                 if reader.read_exact(&mut len_bytes).is_ok() {
                     let len = u32::from_le_bytes(len_bytes) as usize;
@@ -147,7 +138,6 @@ impl SorterInner {
             }
         }
         
-        // Use a min-heap for efficient merging
         let mut heap = BinaryHeap::new();
         
         // Initialize the heap with first record from each reader
@@ -158,16 +148,13 @@ impl SorterInner {
             }
         }
         
-        // Create output file
         self.output_file = NamedTempFile::new()?;
         let mut w = BufWriter::new(&self.output_file);
         let mut count = 0;
         
-        // Process records in sorted order and write them directly
         while let Some(std::cmp::Reverse((_, _, src_idx))) = heap.pop() {
             if let Some((record, reader)) = readers.get_mut(src_idx) {
                 if let Some(rec) = record.take() {
-                    // Write record directly
                     let bytes = bincode::serialize(&rec.record)
                         .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
                     w.write_all(&(bytes.len() as u32).to_le_bytes())?;
@@ -181,7 +168,6 @@ impl SorterInner {
                         let mut bytes = vec![0u8; len];
                         if reader.read_exact(&mut bytes).is_ok() {
                             if let Ok(next_rec) = bincode::deserialize::<SortRecord>(&bytes) {
-                                // Add next record to the heap
                                 heap.push(std::cmp::Reverse((next_rec.key_hash, next_rec.key.clone(), src_idx)));
                                 *record = Some(next_rec);
                             }
@@ -193,31 +179,22 @@ impl SorterInner {
         
         w.flush()?;
         
-        // Clear temp files
         self.temp_files.clear();
         
         Ok(count)
     }
     
-    // In-memory sort and write to output file
     fn sort_in_memory_to_file(&mut self) -> Result<usize, std::io::Error> {
-        // If batch is empty, no sorting needed
         if self.current_batch.is_empty() {
             return Ok(0);
         }
         
-        // Sort the current batch
         self.current_batch.sort_by(|(key_a, _), (key_b, _)| {
             key_a.cmp(key_b)
         });
         
-        // Collect records into a Vec to avoid borrow conflict
-        let records: Vec<Vec<String>> = self.current_batch.iter()
-            .map(|(_, record)| record.clone())
-            .collect();
-        
         // Write sorted records directly to CSV using write_records
-        let total_rows = self.write_records(records)?;        
+        let total_rows = self.write_records()?;        
         
         // Clear the batch
         self.current_batch.clear();
@@ -226,13 +203,13 @@ impl SorterInner {
         Ok(total_rows)
     }
 
-    fn write_records<I>(&mut self, iter: I) -> io::Result<usize> where I: IntoIterator<Item = Vec<String>> {
+    fn write_records(&mut self) -> io::Result<usize> {
         self.output_file = NamedTempFile::new()?;
         let mut w = BufWriter::new(&self.output_file);
         let mut count = 0;
-        for rec in iter {
+        for rec in self.current_batch.iter() {
             // Serialize record to bytes
-            let bytes = bincode::serialize(&rec)
+            let bytes = bincode::serialize(&rec.1)
                 .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
             
             // Write length as u32 (4 bytes)
@@ -245,7 +222,7 @@ impl SorterInner {
         Ok(count)
     }
 
-    // Calculate the total memory usage of current_batch. Don't do this often as it's expensive
+    // total memory usage of current_batch (expensive to call)
     fn current_batch_size(&self) -> usize {
         // Size of the Vec itself
         let vec_size = std::mem::size_of_val(&self.current_batch);
@@ -269,13 +246,9 @@ impl SorterInner {
 }
 
 impl Sorter {
-    // Create a new Sorter - helper function for constructor
-    pub fn new_impl(source_id: String, key_columns: Vec<usize>, buffer_size_mb: usize) -> Result<Self, Error> {
-        const DEFAULT_MAX_TARGETING_KEY_ROWS: usize = 200;
-
+    pub fn new(source_id: String, key_columns: Vec<usize>, buffer_size_mb: usize) -> Result<Self, Error> {
         let buffer_size_bytes = buffer_size_mb * 1024 * 1024;
         
-        // Create output file immediately
         let output_file = match NamedTempFile::new() {
             Ok(file) => file,
             Err(e) => {
@@ -302,11 +275,6 @@ impl Sorter {
             })
         })
     }
-    
-    // Ruby-callable constructor
-    pub fn new(source_id: String, key_columns: Vec<usize>, buffer_size_mb: usize) -> Result<Self, Error> {
-        Self::new_impl(source_id, key_columns, buffer_size_mb)
-    }
 
     pub fn set_validation_schema(&self, schema: RArray) -> Result<(), Error> {
         let mut pattern = Vec::new();
@@ -329,25 +297,23 @@ impl Sorter {
         Ok(())
     }
 
-    // Add a row to the sorter
     pub fn add_row(&self, row: Vec<String>) -> bool {
         let mut inner = self.inner.borrow_mut();
         
-        // Generate key for the row
         let key_str = inner.generate_targeting_key(&row);
         let key = KeyData {
             hash: SorterInner::hash_key(&key_str),
             value: key_str,
         };
         
-        // Estimate this row's size
         let row_size = SorterInner::estimate_row_size(&key, &row);
         
         // Check if adding this row would exceed buffer size        
         if inner.current_buffer_size + row_size > inner.buffer_size_bytes && !inner.current_batch.is_empty() {
             let actual_row_data_size = inner.current_batch_size();
             inner.observed_max_row_size = inner.observed_max_row_size.max(actual_row_data_size);
-            // Create a run file from current batch
+
+            // Create a new run file from current batch
             match inner.make_run() {
                 Ok(Some(run_file)) => {
                     inner.temp_files.push(run_file);
@@ -367,7 +333,6 @@ impl Sorter {
             }
         }
         
-        // Add row to current batch and update buffer size
         inner.current_batch.push((key, row));
         inner.current_buffer_size += row_size;
         
@@ -428,7 +393,6 @@ impl Sorter {
             }
         };
         
-        // Create a Ruby hash for the result
         let result = RHash::new();
         result.aset(Symbol::new("total_rows"), total_rows)?;
         result.aset(Symbol::new("file_count"), temp_file_count)?;
@@ -449,7 +413,6 @@ impl Sorter {
         let block = ruby.block_proc()?;
         let mut inner = self.inner.borrow_mut();
         
-        // Seek to the beginning of the file
         if let Err(e) = inner.output_file.seek(SeekFrom::Start(0)) {
             return Err(Error::new(
                 magnus::exception::runtime_error(),
@@ -457,27 +420,22 @@ impl Sorter {
             ));
         }
         
-        // Create a reader for the file
         let mut reader = BufReader::new(&inner.output_file);
         let mut current_batch: RArray = RArray::new();
         let mut last_key = String::new();
         let mut run_length = 0;
         
-        // Read records from the file and yield them in batches
         loop {
-            // Read length prefix (4 bytes)
             let mut len_bytes = [0u8; 4];
             if reader.read_exact(&mut len_bytes).is_err() {
                 break; // EOF
             }
             let len = u32::from_le_bytes(len_bytes) as usize;
             
-            // Read record bytes
             let mut bytes = vec![0u8; len];
             reader.read_exact(&mut bytes)
                 .map_err(|e| Error::new(magnus::exception::runtime_error(), e.to_string()))?;
             
-            // Deserialize record
             let record: Vec<String> = bincode::deserialize(&bytes)
                 .map_err(|e| Error::new(magnus::exception::runtime_error(), e.to_string()))?;
             
