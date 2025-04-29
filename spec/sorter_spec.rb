@@ -58,4 +58,16 @@ RSpec.describe CsvUtils::Sorter do
     end
     expect(count).to eq(2)
   end
+
+  it "validates on add_row" do
+    sorter = CsvUtils::Sorter.new([0], 100)
+    sorter.set_validation_schema([:url])
+    sorter.add_row(["https://example.com"])
+    sorter.add_row(["test.com"])
+
+    result = sorter.sort!
+    expect(result[:failed_url_error_count]).to eq(1)    
+    expect(result[:total_rows_processed]).to eq(2)
+    expect(result[:total_rows]).to eq(1)
+  end
 end

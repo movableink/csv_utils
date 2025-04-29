@@ -6,309 +6,154 @@ require "set"
 require "csv"
 
 RSpec.describe CsvUtils::Validator do
+  describe "Repeated calls to validate_row" do
+    it "returns the same status" do
+      validator = CsvUtils::Validator.new([:url, :url])
+      expect(validator.validate_row(["https://example.com", "test.com"])).to eq(false)
+      expect(validator.validate_row(["https://example2.com", "test2.com"])).to eq(false)
+      expect(validator.status[:total_rows]).to eq(2)
+      expect(validator.status[:failed_url_error_count]).to eq(2)
+      expect(validator.status[:failed_protocol_error_count]).to eq(0)
+    end
+  end
+
   describe "URL validation" do
     it "validates valid URLs" do
-      # Create a temp CSV file with valid URLs
-      temp_csv = Tempfile.new(["valid_urls", ".csv"])
-      temp_csv.write([
-        "url",
+      row = [
+        "foo",
         "https://example.com",
         "https://test.com/path?query=string#fragment"
-      ].join("\n"))
-      temp_csv.close
+      ]
       
       # Create a pattern with URL validation for the first column
-      pattern = [:url]
+      pattern = [nil, :url, :url]
       
       validator = CsvUtils::Validator.new(pattern)
-      validator.validate_rows(temp_csv.path)
-      
-      # Expect no errors
-      expect(validator.valid?).to eq(true)
-      expect(validator.error_summary).to eq({})
-      
-      # Clean up
-      temp_csv.unlink
+      expect(validator.validate_row(row)).to eq(true)
+
+      expect(validator.status[:total_rows]).to eq(1)
+      expect(validator.status[:failed_url_error_count]).to eq(0)
+      expect(validator.status[:failed_protocol_error_count]).to eq(0)
     end
     
     it "catches invalid URLs" do
-      # Create a temp CSV file with an invalid URL
-      temp_csv = Tempfile.new(["invalid_urls", ".csv"])
-      temp_csv.write([
+      data = [
         "url",
         "https://example.com",
         "invalid-url-no-protocol"
-      ].join("\n"))
-      temp_csv.close
+      ]
       
       # Create a pattern with URL validation for the first column
       pattern = [:url]
       
       # Expect validation to fail
       validator = CsvUtils::Validator.new(pattern)
-      validator.validate_rows(temp_csv.path)
-      
-      expect(validator.valid?).to eq(false)
-      expect(validator.error_summary).to eq({ url: 1 })
-      
-      # Clean up
-      temp_csv.unlink
+      expect(validator.validate_row(data)).to eq(false)
+
+      expect(validator.status[:total_rows]).to eq(1)
+      expect(validator.status[:failed_url_error_count]).to eq(1)
+      expect(validator.status[:failed_protocol_error_count]).to eq(0)
     end
   end
 
   describe "Protocol validation" do
     it "validates that values have a protocol" do
-      # Create a temp CSV file with values having a protocol
-      temp_csv = Tempfile.new(["protocol_values", ".csv"])
-      temp_csv.write([
+      data = [
         "value",
         "http://example.com",
         "ftp://example.com",
         "sms://1234567890"
-      ].join("\n"))
-      temp_csv.close
+      ]
       
       # Create a pattern with protocol validation for the first column
-      pattern = [:protocol]
+      pattern = [nil, :protocol, :protocol, :protocol]
       
       # Expect no errors
       validator = CsvUtils::Validator.new(pattern)
-      validator.validate_rows(temp_csv.path)
-      
-      expect(validator.valid?).to eq(true)
-      expect(validator.error_summary).to eq({})
-      
-      # Clean up
-      temp_csv.unlink
+      expect(validator.validate_row(data)).to eq(true)
+
+      expect(validator.status[:total_rows]).to eq(1)
+      expect(validator.status[:failed_url_error_count]).to eq(0)
+      expect(validator.status[:failed_protocol_error_count]).to eq(0)
     end
 
     it "catches values without a protocol" do
-      # Create a temp CSV file with values without a protocol
-      temp_csv = Tempfile.new(["no_protocol", ".csv"])
-      temp_csv.write([
+      data = [
         "value",
         "example.com",
         "1234567890"
-      ].join("\n"))
-      temp_csv.close
+      ]
       
       # Create a pattern with protocol validation for the first column
-      pattern = [:protocol]
+      pattern = [nil, :protocol, nil]
       
       # Expect validation to fail
       validator = CsvUtils::Validator.new(pattern)
-      validator.validate_rows(temp_csv.path)
-      
-      expect(validator.valid?).to eq(false)
-      expect(validator.error_summary).to eq({ protocol: 2 })
-      expect(validator.error_count).to eq(2)
-      
-      # Clean up
-      temp_csv.unlink
+      expect(validator.validate_row(data)).to eq(false)
+
+      expect(validator.status[:total_rows]).to eq(1)
+      expect(validator.status[:failed_url_error_count]).to eq(0)
+      expect(validator.status[:failed_protocol_error_count]).to eq(1)
     end
 
     it "ignores nil fields" do
-      # Create a temp CSV file with nil fields
-      temp_csv = Tempfile.new(["nil_fields", ".csv"])
-      temp_csv.write([
-        "key,value", 
-        "key1,https://example.com",
-        "key2,",
-        "key3,https://example.com"
-      ].join("\n"))
-      temp_csv.close
+      data = [
+        "foo", 
+        ""
+      ]
       
       # Create a pattern with nil validation for the first column
-      pattern = [nil]
+      pattern = [nil, nil]
       
       # Expect no errors
       validator = CsvUtils::Validator.new(pattern)
-      validator.validate_rows(temp_csv.path)
-      
-      expect(validator.valid?).to eq(true)
-      expect(validator.error_summary).to eq({})
-      
-      # Clean up
-      temp_csv.unlink
+      expect(validator.validate_row(data)).to eq(true)
+
+      expect(validator.status[:total_rows]).to eq(1)
+      expect(validator.status[:failed_url_error_count]).to eq(0)
+      expect(validator.status[:failed_protocol_error_count]).to eq(0)
     end    
   end
 
   describe "Multi validation" do
     it "validates multiple columns" do
-      # Create a temp CSV file with multiple columns
-      temp_csv = Tempfile.new(["multi_column", ".csv"])
-      temp_csv.write([
-        "url,other_url,name,protocol",
-        "https://example.com,http://foo.com,John Doe,http://example.com"
-      ].join("\n"))
-      temp_csv.close
-
+      data = [
+        "https://example.com",
+        "http://foo.com",
+        "John Doe",
+        "http://example.com"
+      ]
+      
       # Create a pattern with URL, name, and protocol validation
       pattern = [:url, :url, nil, :protocol]
 
       # Expect no errors
       validator = CsvUtils::Validator.new(pattern)
-      validator.validate_rows(temp_csv.path)
-      
-      expect(validator.valid?).to eq(true)
-      expect(validator.error_summary).to eq({})
+      validator.validate_row(data)
 
-      # Clean up
-      temp_csv.unlink
+      expect(validator.status[:total_rows]).to eq(1)
+      expect(validator.status[:failed_url_error_count]).to eq(0)
+      expect(validator.status[:failed_protocol_error_count]).to eq(0)
     end
 
     it "returns multiple errors" do
-      # Create a temp CSV file with multiple columns
-      temp_csv = Tempfile.new(["multi_column", ".csv"])
-      temp_csv.write([
-        "url,other_url,name,protocol",
-        "https://example_com,foo.com,John Doe,example.com"
-      ].join("\n"))
-      temp_csv.close
-
+      data = [
+        "https://example_com",
+        "foo.com",
+        "John Doe",
+        "example.com"
+      ]
+      
       # Create a pattern with URL, name, and protocol validation
       pattern = [:url, :url, nil, :protocol]
 
       # Expect multiple errors
       validator = CsvUtils::Validator.new(pattern)
-      validator.validate_rows(temp_csv.path)
-      
-      expect(validator.valid?).to eq(false)
-      expect(validator.error_summary).to eq({ url: 1, protocol: 1 })
-      expect(validator.error_count).to eq(2)
+      expect(validator.validate_row(data)).to eq(false)
 
-      # Clean up
-      temp_csv.unlink
-    end
-  end
-
-  describe "Error logging" do
-    it "logs errors to a file" do
-      # Create a temp CSV file with errors
-      temp_csv = Tempfile.new(["errors", ".csv"])
-      temp_csv.write([
-        "my_url,other_url,name,my_protocol",
-        "example.com,http://foo.com,John Doe,example"
-      ].join("\n"))
-      temp_csv.close
-
-      # Create a pattern with URL, name, and protocol validation
-      pattern = [:url, :url, nil, :protocol]
-
-      # Create a temp file for error log
-      error_log = Tempfile.new(["errors", ".log"], encoding: 'utf-8')
-      error_log.close
-
-      # Validate with error logging
-      validator = CsvUtils::Validator.new(pattern, error_logs_path: error_log.path)
-      validator.validate_rows(temp_csv.path)
-      
-      expect(validator.valid?).to eq(false)
-      expect(validator.error_summary).to eq({ url: 1, protocol: 1 })
-
-      # Check the error log
-      error_log.open
-
-      error_data = error_log.read.chomp
-
-      expect(error_data).to eq([
-        "Error Message,Row,Column",
-        "example.com does not include a valid domain,1,my_url",
-        "example does not include a valid link protocol,1,my_protocol"
-      ].join("\n"))
-
-      # Clean up
-      temp_csv.unlink
-      error_log.unlink
-    end
-  end
-  
-  describe "Instance methods" do
-    it "validates rows using instance method" do
-      temp_csv = Tempfile.new(["instance_test", ".csv"])
-      temp_csv.write([
-        "url,name",
-        "https://example.com,John",
-        "not-a-url,Jane"
-      ].join("\n"))
-      temp_csv.close
-      
-      # Create validator instance
-      validator = CsvUtils::Validator.new([:url, nil])
-      
-      # Validate rows
-      validator.validate_rows(temp_csv.path)
-      expect(validator.valid?).to eq(false)
-      expect(validator.error_summary).to eq({ url: 1 })
-      
-      temp_csv.unlink
-    end
-    
-    it "validates headers" do
-      # Test header validation
-      current_headers = ["id", "name", "email"]
-      incoming_headers = ["id", "name", "email", "extra"]
-      
-      validator = CsvUtils::Validator.new([])
-      logs = validator.validate_headers(current: current_headers, incoming: incoming_headers)
-      
-      # All required headers are present, so should return empty array
-      expect(logs).to eq([])
-      
-      # Test with missing headers
-      current_headers = ["id", "name", "email"]
-      incoming_headers = ["id", "name"]
-      
-      logs = validator.validate_headers(current: current_headers, incoming: incoming_headers)
-      
-      # Should return logs array with header information
-      expect(logs.size).to be > 0
-      expect(logs[0]).to eq("Column,Expected Header,Actual Header\n")
-    end
-  end
-
-  describe "Reversed output" do
-    it "creates a reversed CSV file" do
-      # Create a temp CSV file with multiple rows
-      temp_csv = Tempfile.new(["original", ".csv"])
-      temp_csv.write([
-        "id,name,url",
-        "1,First,https://example.com/first",
-        "2,Second,https://example.com/second",
-        "3,Third,https://example.com/third"
-      ].join("\n"))
-      temp_csv.close
-      
-      # Create a temp file for the reversed output
-      reversed_csv = Tempfile.new(["reversed", ".csv"])
-      reversed_csv.close
-      
-      # Create validator with reversed output path
-      validator = CsvUtils::Validator.new([nil, nil, :url], reversed_output_path: reversed_csv.path)
-      
-      # Validate rows
-      validator.validate_rows(temp_csv.path)
-      
-      # Read the reversed file
-      rows = CSV.read(reversed_csv.path, headers: true)
-      
-      # Verify headers
-      expect(rows.headers).to eq(["id", "name", "url"])
-      
-      # Verify the rows are reversed (excluding header)
-      expect(rows[0]["id"]).to eq("3")
-      expect(rows[0]["name"]).to eq("Third")
-      expect(rows[0]["url"]).to eq("https://example.com/third")
-      
-      expect(rows[1]["id"]).to eq("2")
-      expect(rows[1]["name"]).to eq("Second")
-      
-      expect(rows[2]["id"]).to eq("1")
-      expect(rows[2]["name"]).to eq("First")
-      
-      # Clean up
-      temp_csv.unlink
-      reversed_csv.unlink
+      expect(validator.status[:total_rows]).to eq(1)
+      expect(validator.status[:failed_url_error_count]).to eq(1)
+      expect(validator.status[:failed_protocol_error_count]).to eq(1)
     end
   end
 end

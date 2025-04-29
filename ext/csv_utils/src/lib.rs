@@ -10,5 +10,6 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
 
     sorter::register(ruby, &module)?;
     validator::register(ruby, &module)?;
+    
     Ok(())
 }

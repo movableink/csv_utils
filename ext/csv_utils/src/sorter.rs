@@ -8,8 +8,9 @@ use std::{
 use serde::{Serialize, Deserialize};
 use bincode;
 use tempfile::NamedTempFile;
-use magnus::{prelude::*, Error, method, function, Ruby, Symbol, RHash, RArray, Value, RModule};
+use magnus::{prelude::*, Error, method, function, Ruby, Symbol, RHash, RArray, Value, RModule, exception::arg_error};
 use sha1::{Sha1, Digest};
+use crate::validator::Validator;
 
 #[magnus::wrap(class = "CsvUtils::Sorter")]
 pub struct Sorter {
@@ -30,6 +31,8 @@ struct SorterInner {
 
     // Maximum number of allowed rows for a given targeting key
     max_targeting_key_rows: usize,
+
+    validator: Option<Validator>,
 }
 
 // Serializable record for run files
@@ -211,7 +214,7 @@ impl SorterInner {
             .collect();
         
         // Write sorted records directly to CSV using write_records
-        let total_rows = self.write_records(records)?;
+        let total_rows = self.write_records(records)?;        
         
         // Clear the batch
         self.current_batch.clear();
@@ -291,6 +294,7 @@ impl Sorter {
                 total_rows: 0,
                 observed_max_row_size: 0,
                 max_targeting_key_rows: DEFAULT_MAX_TARGETING_KEY_ROWS,
+                validator: None,
             })
         })
     }
@@ -300,8 +304,29 @@ impl Sorter {
         Self::new_impl(key_columns, buffer_size_mb)
     }
 
+    pub fn set_validation_schema(&self, schema: RArray) -> Result<(), Error> {
+        let mut pattern = Vec::new();
+        for i in 0..schema.len() {
+          let value: Value = schema.entry(i as isize)?;
+          if let Some(symbol) = Symbol::from_value(value) {
+            pattern.push(symbol.to_string());
+          } else if value.is_nil() {
+            pattern.push(String::new());
+          } else {
+            return Err(Error::new(arg_error(), "Pattern must be an array of symbols"));
+          }
+        }
+
+        let mut inner = self.inner.borrow_mut();
+        inner.validator = Some(Validator::new(pattern).map_err(|e| 
+            Error::new(magnus::exception::arg_error(), e.to_string()))?
+        );
+        
+        Ok(())
+    }
+
     // Add a row to the sorter
-    pub fn add_row(&self, row: Vec<String>) -> Result<(), Error> {
+    pub fn add_row(&self, row: Vec<String>) -> bool {
         let mut inner = self.inner.borrow_mut();
         
         // Generate key for the row
@@ -331,12 +356,18 @@ impl Sorter {
                 }
             }
         }
+
+        if let Some(validator) = &mut inner.validator {
+            if validator.validate_row(&row) {
+                return false;
+            }
+        }
         
         // Add row to current batch and update buffer size
         inner.current_batch.push((key, row));
         inner.current_buffer_size += row_size;
         
-        Ok(())
+        true
     }
 
     // Sort all rows and write to a final temp file, return total rows information
@@ -398,6 +429,13 @@ impl Sorter {
         result.aset(Symbol::new("total_rows"), total_rows)?;
         result.aset(Symbol::new("file_count"), temp_file_count)?;
         result.aset(Symbol::new("max_row_memory_usage"), inner.observed_max_row_size)?;
+
+        if let Some(validator) = &inner.validator {
+            result.aset(Symbol::new("total_rows_processed"), validator.total_rows)?;
+            result.aset(Symbol::new("failed_url_error_count"), validator.failed_url_error_count)?;
+            result.aset(Symbol::new("failed_protocol_error_count"), validator.failed_protocol_error_count)?;
+        }
+
         Ok(result)
     }
 
@@ -463,11 +501,12 @@ impl Sorter {
                 }
             }
             
+            last_key = target_key.clone();
+            
             let item = RArray::new();
-            let _ = item.push(target_key.clone());
+            let _ = item.push(target_key);
             let _ = item.push(record);
             let _ = current_batch.push(item);
-            last_key = target_key;
         }
         
         // Yield any remaining records
@@ -484,9 +523,10 @@ impl Sorter {
 pub fn register(ruby: &Ruby, module: &RModule) -> Result<(), Error> {
     let class = module.define_class("Sorter", ruby.class_object())?;
     class.define_singleton_method("new", function!(Sorter::new, 2))?;
+    class.define_method("set_validation_schema", method!(Sorter::set_validation_schema, 1))?;
     class.define_method("add_row", method!(Sorter::add_row, 1))?;
     class.define_method("sort!", method!(Sorter::sort, 0))?;
-    class.define_method("each_batch", method!(Sorter::each_batch, 1))?;
+    class.define_method("each_batch", method!(Sorter::each_batch, 1))?;    
 
     Ok(())
 }
