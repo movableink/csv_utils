@@ -14,7 +14,7 @@ module CsvUtils
     end
 
     def validate_rows(file_path)
-      @result = CsvUtils._validate(file_path, @pattern, @error_logs_path, @reversed_output_path)
+      @result = CsvUtilsValidator._validate(file_path, @pattern, @error_logs_path, @reversed_output_path)
       @result
     end
 

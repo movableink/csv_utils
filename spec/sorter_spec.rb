@@ -11,9 +11,9 @@ def collect_rows(sorter)
   rows
 end
 
-RSpec.describe Sorter do
+RSpec.describe CsvUtils::Sorter do
   it "should sort a CSV file" do
-    sorter = Sorter.new([0], nil)
+    sorter = CsvUtils::Sorter.new([0], 100)
     sorter.add_row(["1", "2", "3"])
     sorter.add_row(["4", "5", "6"])
     result = sorter.sort!
@@ -22,7 +22,7 @@ RSpec.describe Sorter do
   end
 
   it "sorts a CSV file with compound keys" do
-    sorter = Sorter.new([0, 1], nil)
+    sorter = CsvUtils::Sorter.new([0, 1], 100)
     sorter.add_row(["1", "2", "3"])
     sorter.add_row(["1", "3", "2"])
     sorter.add_row(["3", "1", "3"])
@@ -46,7 +46,7 @@ RSpec.describe Sorter do
   end
 
   it "yields batches of sorted rows" do
-    sorter = Sorter.new([0, 1], nil)
+    sorter = CsvUtils::Sorter.new([0, 1], 100)
     sorter.add_row(["1", "2", "3"])
     sorter.add_row(["4", "5", "6"])
     result = sorter.sort!

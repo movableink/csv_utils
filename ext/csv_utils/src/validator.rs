@@ -367,8 +367,8 @@ fn validate_csv(file_path: String, pattern: RArray, error_log_path: Option<Strin
     Ok(result)
 }
 
-pub fn register(ruby: &Ruby, module: &RModule) -> Result<(), Error> {
-    let class = module.define_class("Validator", ruby.class_object())?;
+pub fn register(ruby: &Ruby) -> Result<(), Error> {
+    let class = ruby.define_class("CsvUtilsValidator", ruby.class_object())?;
     class.define_singleton_method("_validate", function!(validate_csv, 4))?;
 
     Ok(())

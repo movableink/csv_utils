@@ -264,11 +264,10 @@ impl SorterInner {
 
 impl Sorter {
     // Create a new Sorter - helper function for constructor
-    pub fn new_impl(key_columns: Vec<usize>, buffer_size_mb: Option<usize>) -> Result<Self, Error> {
-        const DEFAULT_BUFFER_SIZE_MB: usize = 100;
+    pub fn new_impl(key_columns: Vec<usize>, buffer_size_mb: usize) -> Result<Self, Error> {
         const DEFAULT_MAX_TARGETING_KEY_ROWS: usize = 200;
 
-        let buffer_size_bytes = buffer_size_mb.unwrap_or(DEFAULT_BUFFER_SIZE_MB) * 1024 * 1024;
+        let buffer_size_bytes = buffer_size_mb * 1024 * 1024;
         
         // Create output file immediately
         let output_file = match NamedTempFile::new() {
@@ -297,7 +296,7 @@ impl Sorter {
     }
     
     // Ruby-callable constructor
-    pub fn new(key_columns: Vec<usize>, buffer_size_mb: Option<usize>) -> Result<Self, Error> {
+    pub fn new(key_columns: Vec<usize>, buffer_size_mb: usize) -> Result<Self, Error> {
         Self::new_impl(key_columns, buffer_size_mb)
     }
 
@@ -482,12 +481,12 @@ impl Sorter {
     }
 }
 
-pub fn register(ruby: &Ruby, module: &RModule) -> Result<(), Error> {
-    let class = module.define_class("Sorter", ruby.class_object())?;
+pub fn register(ruby: &Ruby) -> Result<(), Error> {
+    let class = ruby.define_class("CsvUtilsSorter", ruby.class_object())?;
     class.define_singleton_method("new", function!(Sorter::new, 2))?;
     class.define_method("add_row", method!(Sorter::add_row, 1))?;
     class.define_method("sort!", method!(Sorter::sort, 0))?;
     class.define_method("each_batch", method!(Sorter::each_batch, 1))?;
-    
+
     Ok(())
 }
