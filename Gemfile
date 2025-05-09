@@ -14,3 +14,5 @@ gem "rspec", "~> 3.0"
 gem "rubocop", "~> 1.21"
 
 gem "csv", "~> 3.3"
+
+gem "activerecord-copy", "~> 1.1.0"

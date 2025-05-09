@@ -4,13 +4,15 @@ use std::{
     collections::BinaryHeap,
     hash::{Hash, Hasher},
     cell::RefCell,
+    path::Path,
 };
 use serde::{Serialize, Deserialize};
 use bincode;
 use tempfile::NamedTempFile;
-use magnus::{prelude::*, Error, method, function, Ruby, Symbol, RHash, RArray, Value, RModule, exception::arg_error};
+use magnus::{prelude::*, Error, method, function, Ruby, Symbol, RHash, RArray, Value, RModule};
 use sha1::{Sha1, Digest};
-use crate::validator::Validator;
+use crate::validator::{ruby_rules_array_to_rules, Validator};
+use crate::postgres_copier::{PostgresCopier, GeoIndexes};
 
 const DEFAULT_MAX_TARGETING_KEY_ROWS: usize = 200;
 
@@ -23,6 +25,7 @@ pub struct Sorter {
 struct SorterInner {
     source_id: String,
     key_columns: Vec<usize>,
+    geo_columns: Option<GeoIndexes>,
     current_batch: Vec<(KeyData, Vec<String>)>,
     buffer_size_bytes: usize,
     temp_files: Vec<NamedTempFile>,
@@ -246,8 +249,13 @@ impl SorterInner {
 }
 
 impl Sorter {
-    pub fn new(source_id: String, key_columns: Vec<usize>, buffer_size_mb: usize) -> Result<Self, Error> {
+    pub fn new(source_id: String, key_columns: Vec<usize>, geo_columns_vec: Option<Vec<usize>>, buffer_size_mb: usize) -> Result<Self, Error> {
         let buffer_size_bytes = buffer_size_mb * 1024 * 1024;
+
+        let geo_columns = match geo_columns_vec {
+            Some(indexes) => Some((indexes[0], indexes[1])),
+            None => None,
+        };
         
         let output_file = match NamedTempFile::new() {
             Ok(file) => file,
@@ -263,6 +271,7 @@ impl Sorter {
             inner: RefCell::new(SorterInner {
                 source_id,
                 key_columns,
+                geo_columns,
                 current_batch: Vec::new(),
                 buffer_size_bytes,
                 temp_files: Vec::new(),
@@ -276,21 +285,11 @@ impl Sorter {
         })
     }
 
-    pub fn set_validation_schema(&self, schema: RArray) -> Result<(), Error> {
-        let mut pattern = Vec::new();
-        for i in 0..schema.len() {
-          let value: Value = schema.entry(i as isize)?;
-          if let Some(symbol) = Symbol::from_value(value) {
-            pattern.push(symbol.to_string());
-          } else if value.is_nil() {
-            pattern.push(String::new());
-          } else {
-            return Err(Error::new(arg_error(), "Pattern must be an array of symbols"));
-          }
-        }
-
+    pub fn enable_validation(&self, schema: RArray, error_log_path: String) -> Result<(), Error> {
         let mut inner = self.inner.borrow_mut();
-        inner.validator = Some(Validator::new(pattern).map_err(|e| 
+        let rules = ruby_rules_array_to_rules(schema).map_err(|e| 
+            Error::new(magnus::exception::arg_error(), e.to_string()))?;
+        inner.validator = Some(Validator::new(rules, error_log_path).map_err(|e| 
             Error::new(magnus::exception::arg_error(), e.to_string()))?
         );
         
@@ -337,6 +336,35 @@ impl Sorter {
         inner.current_buffer_size += row_size;
         
         true
+    }
+
+    pub fn add_file(&self, file_path: String) -> Result<(), Error> {
+        // parse csv file, skipping headers
+        let file = File::open(file_path)
+            .map_err(|e| Error::new(magnus::exception::runtime_error(), e.to_string()))?;
+        let mut reader = csv::Reader::from_reader(file);
+        
+        for result in reader.records() {
+            match result {
+                Ok(record) => {
+                    // Convert StringRecord to Vec<String>
+                    let row: Vec<String> = record.iter()
+                        .map(|field| field.to_string())
+                        .collect();
+                    self.add_row(row);
+                },
+                Err(e) => {
+                    if let Some(validator) = &mut self.inner.borrow_mut().validator {
+                        let _ = validator.add_error_to_file("parse", 0, 0, &e.to_string());
+                        validator.parse_error_count += 1;
+                    }
+                    // Continue processing other records
+                    continue;
+                }
+            }
+        }
+
+        Ok(())
     }
 
     // Sort all rows and write to a final temp file, return total rows information
@@ -402,6 +430,7 @@ impl Sorter {
             result.aset(Symbol::new("total_rows_processed"), validator.total_rows)?;
             result.aset(Symbol::new("failed_url_error_count"), validator.failed_url_error_count)?;
             result.aset(Symbol::new("failed_protocol_error_count"), validator.failed_protocol_error_count)?;
+            result.aset(Symbol::new("parse_error_count"), validator.parse_error_count)?;
         }
 
         Ok(result)
@@ -480,15 +509,30 @@ impl Sorter {
         
         Ok(())
     }
+
+    pub fn write_binary_postgres_file(&self, file_path: String) -> Result<(), Error> {
+        let inner = self.inner.borrow_mut();
+        let input_file_path = inner.output_file.path();
+        let output_file_path = Path::new(&file_path);
+
+        let mut copier = PostgresCopier::new(input_file_path, inner.key_columns.clone(), inner.geo_columns.clone(), inner.source_id.clone())
+            .map_err(|e| Error::new(magnus::exception::runtime_error(), e.to_string()))?;
+
+        copier.copy(output_file_path).map_err(|e| Error::new(magnus::exception::runtime_error(), e.to_string()))?;
+
+        Ok(())
+    }
 }
 
 pub fn register(ruby: &Ruby, module: &RModule) -> Result<(), Error> {
     let class = module.define_class("Sorter", ruby.class_object())?;
-    class.define_singleton_method("new", function!(Sorter::new, 3))?;
-    class.define_method("set_validation_schema", method!(Sorter::set_validation_schema, 1))?;
+    class.define_singleton_method("new", function!(Sorter::new, 4))?;
+    class.define_method("enable_validation", method!(Sorter::enable_validation, 2))?;
     class.define_method("add_row", method!(Sorter::add_row, 1))?;
+    class.define_method("add_file", method!(Sorter::add_file, 1))?;
     class.define_method("sort!", method!(Sorter::sort, 0))?;
-    class.define_method("each_batch", method!(Sorter::each_batch, 1))?;    
-
+    class.define_method("each_batch", method!(Sorter::each_batch, 1))?;
+    class.define_method("write_binary_postgres_file", method!(Sorter::write_binary_postgres_file, 1))?;
+    
     Ok(())
 }
