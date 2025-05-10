@@ -6,7 +6,9 @@ use sha1::{Digest, Sha1};
 use std::time::SystemTime;
 use std::path::Path;
 use postgres::types::ToSql;
-use crate::geometry::Geometry;
+use postgis::ewkb::Point;
+use postgres::types::Kind;
+
 pub type GeoIndexes = (usize, usize);
 
 pub struct PostgresCopier {
@@ -23,7 +25,7 @@ impl PostgresCopier {
     Ok(Self { reader, targeting_indexes, geo_indexes, source_key })
   }
 
-  fn iter_records(&mut self) -> impl Iterator<Item = Result<(String, Option<Geometry>, Vec<String>), std::io::Error>> + '_ {
+  fn iter_records(&mut self) -> impl Iterator<Item = Result<(String, Option<Point>, Vec<String>), std::io::Error>> + '_ {
     std::iter::from_fn(move || {
       let mut len_bytes = [0u8; 4];
       if self.reader.read_exact(&mut len_bytes).is_err() {
@@ -70,31 +72,34 @@ impl PostgresCopier {
     format!("{:x}", digest)
   }
 
-  fn generate_geo_key(&self, row: &[String]) -> Option<Geometry> {
+  fn generate_geo_key(&self, row: &[String]) -> Option<Point> {
     let latitude_str = row.get(self.geo_indexes.unwrap().0)?;
     let longitude_str = row.get(self.geo_indexes.unwrap().1)?;
 
     let latitude = latitude_str.parse::<f64>().ok()?;
     let longitude = longitude_str.parse::<f64>().ok()?;
 
-    Some(Geometry::new(longitude, latitude, Some(4326)))
+    Some(Point::new(longitude, latitude, Some(4326)))
   }
 
   pub fn copy(&mut self, output_file_path: &Path) -> Result<(), std::io::Error> {
     let now = SystemTime::now();
     let source_key = self.source_key.clone();
 
+    let geometry_type = Self::make_geometry_type();
+
     let types = vec![
       Type::VARCHAR,
       Type::VARCHAR,
-      Geometry::as_type(),
+      geometry_type,
       Type::VARCHAR_ARRAY,
       Type::TIMESTAMP,
       Type::TIMESTAMP,
     ];
-    let mut writer = BinaryCopyFileWriter::new(types);
-    let mut output_file = File::create(output_file_path)?;
-    writer.write_header(&mut output_file)?;
+    let output_file = File::create(output_file_path)?;
+    let mut writer = BinaryCopyFileWriter::new(types, output_file);
+    
+    writer.write_header()?;
 
     for result in self.iter_records() {
       let (target_key, geo_key, record) = result?;
@@ -106,10 +111,19 @@ impl PostgresCopier {
         &now,
         &now
       ];
-      writer.write_row(&mut output_file, &row)?;
+      writer.write_row(&row)?;
     }
 
-    writer.write_footer(&mut output_file)?;
+    writer.write_footer()?;
     Ok(())
+  }
+
+  fn make_geometry_type() -> Type {
+    Type::new(
+      "geometry".to_string(),
+      Type::POINT.oid(),
+      Kind::Simple,
+      "public".to_string()
+    )
   }
 }

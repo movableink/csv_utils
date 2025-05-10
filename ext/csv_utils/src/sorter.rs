@@ -98,17 +98,22 @@ impl SorterInner {
         self.current_batch.sort_unstable();
         let temp = NamedTempFile::new()?;
         {
-            let mut w = BufWriter::new(&temp);
+            let mut buf = Vec::with_capacity(8192);
+            let mut w = BufWriter::with_capacity(16384, &temp);
+            
             for (key, rec) in &self.current_batch {
                 let sort_record = SortRecord {
                     key_hash: key.hash,
                     key: key.value.clone(),
                     record: rec.clone(),
                 };
-                let bytes = bincode::serialize(&sort_record)
+                
+                buf.clear();
+                bincode::serialize_into(&mut buf, &sort_record)
                     .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-                w.write_all(&(bytes.len() as u32).to_le_bytes())?;
-                w.write_all(&bytes)?;
+                
+                w.write_all(&(buf.len() as u32).to_le_bytes())?;
+                w.write_all(&buf)?;
             }
             w.flush()?;
         }

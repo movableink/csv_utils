@@ -1,47 +1,42 @@
-use std::io::{self, Write};
+use std::io::{self, Write, BufWriter};
 use byteorder::{BigEndian, WriteBytesExt};
 use postgres::types::{Type, ToSql, IsNull};
 use bytes::BytesMut;
 
 const HEADER_MAGIC: &[u8] = b"PGCOPY\n\xff\r\n\0";
 
-/// A writer for PostgreSQL binary-copy streams with runtime-defined column types.
-pub struct BinaryCopyFileWriter {
+/// A writer for PostgreSQL binary-copy streams
+pub struct BinaryCopyFileWriter<W: Write> {
     types: Vec<Type>,
     buf: BytesMut,
+    writer: BufWriter<W>,
 }
 
-impl BinaryCopyFileWriter {
-    /// Create a new writer, consuming any iterator of `Type`.
-    pub fn new<I>(types: I) -> Self
+impl<W: Write> BinaryCopyFileWriter<W> {
+    pub fn new<I>(types: I, writer: W) -> Self
     where
         I: IntoIterator<Item = Type>,
     {
         BinaryCopyFileWriter {
             types: types.into_iter().collect(),
             buf: BytesMut::new(),
+            writer: BufWriter::new(writer),
         }
     }
 
-    /// Write the 19-byte header plus two zero fields.
-    pub fn write_header<W: Write>(&self, w: &mut W) -> io::Result<()> {
-        w.write_all(HEADER_MAGIC)?;
-        w.write_i32::<BigEndian>(0)?; // flags
-        w.write_i32::<BigEndian>(0)?; // header extension area length
+    pub fn write_header(&mut self) -> io::Result<()> {
+        self.writer.write_all(HEADER_MAGIC)?;
+        self.writer.write_i32::<BigEndian>(0)?; // flags
+        self.writer.write_i32::<BigEndian>(0)?; // header extension area length
         Ok(())
     }
 
-    /// Write a single row. `row.len()` must equal the number of types.
-    pub fn write_row<W: Write>(
-        &mut self,
-        w: &mut W,
-        row: &[&(dyn ToSql + Sync)],
-    ) -> io::Result<()> {
+    pub fn write_row(&mut self, row: &[&(dyn ToSql + Sync)]) -> io::Result<()> {
         if row.len() != self.types.len() {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "row length mismatch"));
         }
 
-        w.write_u16::<BigEndian>(row.len() as u16)?;
+        self.writer.write_u16::<BigEndian>(row.len() as u16)?;
 
         for (i, val) in row.iter().enumerate() {
             self.buf.clear();
@@ -51,11 +46,11 @@ impl BinaryCopyFileWriter {
 
             match is_null {
                 IsNull::Yes => {
-                    w.write_i32::<BigEndian>(-1)?;
+                    self.writer.write_i32::<BigEndian>(-1)?;
                 }
                 IsNull::No => {
-                    w.write_i32::<BigEndian>(self.buf.len() as i32)?;
-                    w.write_all(&self.buf)?;
+                    self.writer.write_i32::<BigEndian>(self.buf.len() as i32)?;
+                    self.writer.write_all(&self.buf)?;
                 }
             }
         }
@@ -63,9 +58,9 @@ impl BinaryCopyFileWriter {
         Ok(())
     }
 
-    /// Write the end-of-data marker (`-1` as a signed 16-bit int).
-    pub fn write_footer<W: Write>(&self, w: &mut W) -> io::Result<()> {
-        w.write_i16::<BigEndian>(-1)?;
+    pub fn write_footer(&mut self) -> io::Result<()> {
+        self.writer.write_i16::<BigEndian>(-1)?;
+        self.writer.flush()?;
         Ok(())
     }
 }
