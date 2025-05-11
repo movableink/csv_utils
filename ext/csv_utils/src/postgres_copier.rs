@@ -2,27 +2,25 @@ use std::io::{BufReader, Read};
 use crate::binary_copy_file_writer::BinaryCopyFileWriter;
 use std::fs::File;
 use postgres::types::Type;
-use sha1::{Digest, Sha1};
 use std::time::SystemTime;
 use std::path::Path;
 use postgres::types::ToSql;
 use postgis::ewkb::Point;
 use postgres::types::Kind;
-
+use crate::sorter::SortRecord;
 pub type GeoIndexes = (usize, usize);
 
 pub struct PostgresCopier {
   reader: BufReader<File>,
-  targeting_indexes: Vec<usize>,
   geo_indexes: Option<GeoIndexes>,
   source_key: String,
 }
 
 impl PostgresCopier {
-  pub fn new(input_file: &Path, targeting_indexes: Vec<usize>, geo_indexes: Option<GeoIndexes>, source_key: String) -> Result<Self, std::io::Error> {
+  pub fn new(input_file: &Path, geo_indexes: Option<GeoIndexes>, source_key: String) -> Result<Self, std::io::Error> {
     let reader = BufReader::new(File::open(input_file)?);
     
-    Ok(Self { reader, targeting_indexes, geo_indexes, source_key })
+    Ok(Self { reader, geo_indexes, source_key })
   }
 
   fn iter_records(&mut self) -> impl Iterator<Item = Result<(String, Option<Point>, Vec<String>), std::io::Error>> + '_ {
@@ -38,38 +36,20 @@ impl PostgresCopier {
         return Some(Err(e));
       }
       
-      let record: Vec<String> = match bincode::deserialize(&bytes) {
+      let record: SortRecord = match bincode::deserialize(&bytes) {
         Ok(r) => r,
         Err(e) => return Some(Err(std::io::Error::new(std::io::ErrorKind::InvalidData, e))),
       };
 
-      let target_key = self.generate_targeting_key(&record);
+      let target_key = record.key.value;
       let geo_key = if self.geo_indexes.is_some() {
-        self.generate_geo_key(&record)
+        self.generate_geo_key(&record.record)
       } else {
         None
       };
 
-      Some(Ok((target_key, geo_key, record)))
+      Some(Ok((target_key, geo_key, record.record)))
     })
-  }
-
-  fn generate_targeting_key(&self, row: &[String]) -> String {
-    let mut hasher = Sha1::new();
-    hasher.update(self.source_key.as_bytes());
-    hasher.update(b",");
-    
-    for (i, &col) in self.targeting_indexes.iter().enumerate() {
-        if let Some(val) = row.get(col) {
-            hasher.update(val.as_bytes());
-            if i < self.targeting_indexes.len() - 1 {
-                hasher.update(b",");
-            }
-        }
-    }
-
-    let digest = hasher.finalize();
-    format!("{:x}", digest)
   }
 
   fn generate_geo_key(&self, row: &[String]) -> Option<Point> {

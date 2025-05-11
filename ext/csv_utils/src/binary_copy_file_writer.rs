@@ -20,7 +20,7 @@ impl<W: Write> BinaryCopyFileWriter<W> {
         BinaryCopyFileWriter {
             types: types.into_iter().collect(),
             buf: BytesMut::new(),
-            writer: BufWriter::new(writer),
+            writer: BufWriter::with_capacity(5 * 1024 * 1024, writer),
         }
     }
 
