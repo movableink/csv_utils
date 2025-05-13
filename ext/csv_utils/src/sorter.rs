@@ -100,14 +100,11 @@ impl SorterInner {
     fn generate_targeting_key(&self, row: &[String]) -> String {
         let mut hasher = Sha1::new();
         hasher.update(self.source_id.as_bytes());
-        hasher.update(b",");
         
         for (i, &col) in self.key_columns.iter().enumerate() {
             if let Some(val) = row.get(col) {
+                hasher.update(b",");
                 hasher.update(val.as_bytes());
-                if i < self.key_columns.len() - 1 {
-                    hasher.update(b",");
-                }
             }
         }
 
@@ -123,8 +120,9 @@ impl SorterInner {
     
     fn estimate_row_size(key: &KeyData, row: &[String]) -> usize {
         let key_size = key.value.len() + std::mem::size_of::<KeyData>();
+        let size_of_string = std::mem::size_of::<String>();
         let row_size: usize = row.iter()
-            .map(|s| s.len() + std::mem::size_of::<String>())
+            .map(|s| s.len() + size_of_string)
             .sum();
         
         key_size + row_size
@@ -142,12 +140,16 @@ impl SorterInner {
         {
             let mut w = BufWriter::with_capacity(BUFFER_CAPACITY, &temp);
             
-            for sort_record in self.current_batch.drain(..) {      
+            for sort_record in self.current_batch.drain(..) {
+                // First, write the hash as a little endian u64
                 w.write_all(&sort_record.key.hash.to_le_bytes())?;
 
+                // Write bincode into a buffer so we can record the size of the record
                 self.buf.clear();
                 let length = bincode::encode_into_std_write(&sort_record, &mut self.buf, bincode::config::legacy())
                     .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+
+                // [size of record] [record bytes] will make it easy to read the record back in later
                 w.write_all(&(length as u32).to_le_bytes())?;
                 w.write_all(&self.buf)?;
             }
