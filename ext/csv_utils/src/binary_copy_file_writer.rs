@@ -1,7 +1,7 @@
-use std::io::{self, Write, BufWriter};
 use byteorder::{BigEndian, WriteBytesExt};
-use postgres::types::{Type, ToSql, IsNull};
 use bytes::BytesMut;
+use postgres::types::{IsNull, ToSql, Type};
+use std::io::{self, BufWriter, Write};
 
 const HEADER_MAGIC: &[u8] = b"PGCOPY\n\xff\r\n\0";
 
@@ -33,7 +33,10 @@ impl<W: Write> BinaryCopyFileWriter<W> {
 
     pub fn write_row(&mut self, row: &[&(dyn ToSql + Sync)]) -> io::Result<()> {
         if row.len() != self.types.len() {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "row length mismatch"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "row length mismatch",
+            ));
         }
 
         self.writer.write_u16::<BigEndian>(row.len() as u16)?;

@@ -1,9 +1,9 @@
 use magnus::{Error, Ruby};
 
-mod validator;
-mod sorter;
-mod postgres_copier;
 mod binary_copy_file_writer;
+mod postgres_copier;
+mod sorter;
+mod validator;
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
