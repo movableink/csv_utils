@@ -19,6 +19,8 @@ pub struct PostgresCopier {
     source_key: String,
 }
 
+type RowItem = ([u8; 20], Option<Point>, Vec<String>);
+
 impl PostgresCopier {
     pub fn new(
         input_file: &Path,
@@ -36,7 +38,7 @@ impl PostgresCopier {
 
     fn iter_records(
         &mut self,
-    ) -> impl Iterator<Item = Result<([u8; 20], Option<Point>, Vec<String>), std::io::Error>> + '_
+    ) -> impl Iterator<Item = Result<RowItem, std::io::Error>> + '_
     {
         std::iter::from_fn(move || {
             let mut len_bytes = [0u8; 4];

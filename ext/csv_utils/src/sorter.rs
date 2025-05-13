@@ -581,7 +581,7 @@ impl Sorter {
                 current_batch = RArray::new();
             }
 
-            last_key = target_key.clone();
+            last_key = target_key;
 
             let item = RArray::new();
             let key_hex = target_key.iter().map(|b| format!("{:02x}", b)).collect::<String>();
