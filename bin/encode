@@ -45,22 +45,25 @@ output_file = ARGV[1]
 # Set default options
 options[:key_columns] ||= [0]  # Default to first column as key
 options[:buffer_size] ||= 300  # Default 300MB buffer
-options[:source_id] ||= "default"
+options[:source_id] ||= "1"
+options[:source_key] ||= "default"
 
 # Create and configure the sorter
 source_id = options[:source_id]
 key_columns = options[:key_columns]
 geo_columns = options[:geo_columns]
 buffer_size = options[:buffer_size]
+source_key = options[:source_key]
 
 puts "Initializing sorter with:"
 puts "  - Source ID: #{source_id}"
+puts "  - Source key: #{source_key}"
 puts "  - Key columns: #{key_columns.join(', ')}"
 puts "  - Geo columns: #{geo_columns ? geo_columns.join(', ') : 'none'}"
 puts "  - Buffer size: #{buffer_size}MB"
 
 # Initialize the sorter
-sorter = CsvUtils::Sorter.new(source_id, key_columns, geo_columns, buffer_size)
+sorter = CsvUtils::Sorter.new(source_id, source_key, key_columns, geo_columns, buffer_size)
 
 # Process the input file
 puts "Processing file: #{input_file}"

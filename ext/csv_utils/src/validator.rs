@@ -123,7 +123,7 @@ impl Validator {
         Ok(())
     }
 
-    pub fn validate_row(&mut self, row: &Vec<String>) -> bool {
+    pub fn validate_row(&mut self, row: &[String]) -> bool {
         let mut failed_url = false;
         let mut failed_protocol = false;
         let mut errors_to_log = Vec::new();
@@ -178,10 +178,12 @@ pub fn ruby_rules_array_to_rules(rules: RArray) -> Result<Vec<ValidationRule>, E
         .map(|rule| {
             let rule = RHash::try_convert(rule)?;
             let column_name = rule
-                .aref::<Symbol, Value>(column_name_key).map_err(|_| Error::new(arg_error(), "Missing column_name"))?
+                .aref::<Symbol, Value>(column_name_key)
+                .map_err(|_| Error::new(arg_error(), "Missing column_name"))?
                 .to_string();
             let validation_type_str = rule
-                .aref::<Symbol, Value>(validation_type_key).map_err(|_| Error::new(arg_error(), "Missing validation_type"))?
+                .aref::<Symbol, Value>(validation_type_key)
+                .map_err(|_| Error::new(arg_error(), "Missing validation_type"))?
                 .to_string();
 
             match ValidationType::from_string(validation_type_str.as_str()) {

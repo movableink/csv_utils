@@ -53,15 +53,7 @@ pub struct SortRecord {
 
 impl Ord for SortRecord {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        // First compare by hash
-        let hash_cmp = self.key.hash.cmp(&other.key.hash);
-
-        // If hashes are equal, compare by value for tie-breaking
-        if hash_cmp == std::cmp::Ordering::Equal {
-            self.key.value.cmp(&other.key.value)
-        } else {
-            hash_cmp
-        }
+        (self.key).cmp(&(other.key))
     }
 }
 
@@ -76,17 +68,17 @@ impl PartialOrd for SortRecord {
 pub struct KeyData {
     pub hash: u64,
     pub value: String,
+    pub position: usize,
 }
 
 impl Ord for KeyData {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        let hash_cmp = self.hash.cmp(&other.hash);
-
-        if hash_cmp == std::cmp::Ordering::Equal {
-            self.value.cmp(&other.value)
-        } else {
-            hash_cmp
-        }
+        // Compare: hash, value, reverse position
+        (self.hash, &self.value, std::cmp::Reverse(self.position)).cmp(&(
+            other.hash,
+            &other.value,
+            std::cmp::Reverse(other.position),
+        ))
     }
 }
 
@@ -141,7 +133,15 @@ impl SorterInner {
 
             for sort_record in self.current_batch.drain(..) {
                 // First, write the hash as a little endian u64
-                w.write_all(&sort_record.key.hash.to_le_bytes())?;
+                self.buf.clear();
+                let key_length = bincode::encode_into_std_write(
+                    &sort_record.key,
+                    &mut self.buf,
+                    bincode::config::legacy(),
+                )
+                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+                w.write_all(&(key_length as u32).to_le_bytes())?;
+                w.write_all(&self.buf)?;
 
                 // Write bincode into a buffer so we can record the size of the record
                 self.buf.clear();
@@ -175,31 +175,39 @@ impl SorterInner {
             let file = File::open(temp_file.path())?;
             let mut reader = BufReader::with_capacity(BUFFER_CAPACITY, file);
 
-            // Read first record
-            let mut hash_bytes = [0u8; 8];
-            if reader.read_exact(&mut hash_bytes).is_err() {
+            // Read first record (key_length, key, record_length, record)
+            let mut key_length_bytes = [0u8; 4];
+            if reader.read_exact(&mut key_length_bytes).is_err() {
                 continue; // Skip empty files
             }
+            //println!("key_length_bytes: {:?}", key_length_bytes);
 
-            let hash = u64::from_le_bytes(hash_bytes);
-            let mut len_bytes = [0u8; 4];
-            if reader.read_exact(&mut len_bytes).is_err() {
-                continue;
-            }
+            let key_length = u32::from_le_bytes(key_length_bytes) as usize;
+            //println!("key_length: {:?}", key_length);
+            let mut key_bytes = vec![0u8; key_length];
+            reader.read_exact(&mut key_bytes)?;
+            //println!("key_bytes: {:?}", key_bytes);
 
-            let len = u32::from_le_bytes(len_bytes) as usize;
-            let mut bytes = vec![0u8; len];
-            if reader.read_exact(&mut bytes).is_err() {
-                continue;
-            }
+            let (key, _): (KeyData, usize) =
+                bincode::decode_from_slice(&key_bytes, bincode::config::legacy())
+                    .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
 
-            readers.push((hash, bytes, reader));
+            //println!("key: {:?}", key);
+
+            let mut record_length_bytes = [0u8; 4];
+            reader.read_exact(&mut record_length_bytes)?;
+
+            let record_length = u32::from_le_bytes(record_length_bytes) as usize;
+            let mut record_bytes = vec![0u8; record_length];
+            reader.read_exact(&mut record_bytes)?;
+
+            readers.push((key, record_bytes, reader));
         }
 
         // Create min-heap for merge sorting
         let mut heap = BinaryHeap::with_capacity(readers.len());
-        for (i, (hash, _, _)) in readers.iter().enumerate() {
-            heap.push(std::cmp::Reverse((*hash, i)));
+        for (i, (key, _, _)) in readers.iter().enumerate() {
+            heap.push((key.clone(), i));
         }
 
         // Prepare output file
@@ -208,32 +216,41 @@ impl SorterInner {
         let mut count = 0;
 
         // Process records in sorted order
-        while let Some(std::cmp::Reverse((_, src_idx))) = heap.pop() {
-            if let Some((hash, record_bytes, reader)) = readers.get_mut(src_idx) {
+        while let Some((_, src_idx)) = heap.pop() {
+            if let Some((key, record_bytes, reader)) = readers.get_mut(src_idx) {
                 // Write current record
                 writer.write_all(&(record_bytes.len() as u32).to_le_bytes())?;
                 writer.write_all(record_bytes)?;
                 count += 1;
 
                 // Try to read next record from this source
-                let mut hash_bytes = [0u8; 8];
-                if reader.read_exact(&mut hash_bytes).is_err() {
+                let mut key_length_bytes = [0u8; 4];
+                if reader.read_exact(&mut key_length_bytes).is_err() {
                     continue; // No more records in this reader
                 }
 
-                let mut len_bytes = [0u8; 4];
-                if reader.read_exact(&mut len_bytes).is_err() {
-                    continue;
-                }
+                let key_length = u32::from_le_bytes(key_length_bytes) as usize;
+                //println!("key_length: {:?}", key_length);
+                let mut key_bytes = vec![0u8; key_length];
+                reader.read_exact(&mut key_bytes)?;
 
-                let len = u32::from_le_bytes(len_bytes) as usize;
-                let mut bytes = vec![0u8; len];
-                if reader.read_exact(&mut bytes).is_ok() {
-                    let next_hash = u64::from_le_bytes(hash_bytes);
-                    heap.push(std::cmp::Reverse((next_hash, src_idx)));
-                    *hash = next_hash;
-                    *record_bytes = bytes;
-                }
+                //println!("key_bytes: {:?}", key_bytes);
+
+                let (next_key, _): (KeyData, usize) =
+                    bincode::decode_from_slice(&key_bytes, bincode::config::legacy())
+                        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+
+                //println!("next_key: {:?}", next_key);
+
+                let mut record_length_bytes = [0u8; 4];
+                reader.read_exact(&mut record_length_bytes)?;
+
+                let record_length = u32::from_le_bytes(record_length_bytes) as usize;
+                let mut rec_bytes = vec![0u8; record_length];
+                reader.read_exact(&mut rec_bytes)?;
+                heap.push((next_key.clone(), src_idx));
+                *key = next_key;
+                *record_bytes = rec_bytes;
             }
         }
 
@@ -365,13 +382,14 @@ impl Sorter {
         Ok(())
     }
 
-    pub fn add_row(&self, row: Vec<String>) -> bool {
+    pub fn add_row(&self, row: Vec<String>, position: usize) -> bool {
         let mut inner = self.inner.borrow_mut();
 
         let key_str = inner.generate_targeting_key(&row);
         let key = KeyData {
             hash: SorterInner::hash_key(&key_str),
             value: key_str,
+            position,
         };
 
         let row_size = SorterInner::estimate_row_size(&key, &row);
@@ -415,12 +433,12 @@ impl Sorter {
             .map_err(|e| Error::new(magnus::exception::runtime_error(), e.to_string()))?;
         let mut reader = csv::Reader::from_reader(file);
 
-        for result in reader.records() {
+        for (position, result) in reader.records().enumerate() {
             match result {
                 Ok(record) => {
                     // Convert StringRecord to Vec<String>
                     let row: Vec<String> = record.iter().map(|field| field.to_string()).collect();
-                    self.add_row(row);
+                    self.add_row(row, position);
                 }
                 Err(e) => {
                     if let Some(validator) = &mut self.inner.borrow_mut().validator {
@@ -596,12 +614,9 @@ impl Sorter {
         let input_file_path = inner.output_file.path();
         let output_file_path = Path::new(&file_path);
 
-        let mut copier = PostgresCopier::new(
-            input_file_path,
-            inner.geo_columns,
-            inner.source_key.clone(),
-        )
-        .map_err(|e| Error::new(magnus::exception::runtime_error(), e.to_string()))?;
+        let mut copier =
+            PostgresCopier::new(input_file_path, inner.geo_columns, inner.source_key.clone())
+                .map_err(|e| Error::new(magnus::exception::runtime_error(), e.to_string()))?;
 
         copier
             .copy(output_file_path)
@@ -615,7 +630,7 @@ pub fn register(ruby: &Ruby, module: &RModule) -> Result<(), Error> {
     let class = module.define_class("Sorter", ruby.class_object())?;
     class.define_singleton_method("new", function!(Sorter::new, 5))?;
     class.define_method("enable_validation", method!(Sorter::enable_validation, 2))?;
-    class.define_method("add_row", method!(Sorter::add_row, 1))?;
+    class.define_method("add_row", method!(Sorter::add_row, 2))?;
     class.define_method("add_file", method!(Sorter::add_file, 1))?;
     class.define_method("sort!", method!(Sorter::sort, 0))?;
     class.define_method("each_batch", method!(Sorter::each_batch, 1))?;

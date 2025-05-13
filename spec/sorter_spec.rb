@@ -32,8 +32,8 @@ RSpec.describe CsvUtils::Sorter do
 
   it "should sort a CSV file" do
     sorter = CsvUtils::Sorter.new(source_id, source_key, [0], nil, 100)
-    sorter.add_row(["1", "2", "3"])
-    sorter.add_row(["4", "5", "6"])
+    sorter.add_row(["1", "2", "3"], 0)
+    sorter.add_row(["4", "5", "6"], 1)
     result = sorter.sort!
     expect(result[:total_rows]).to eq(2)
     expect(collect_rows(sorter)).to eq([["1", "2", "3"], ["4", "5", "6"]])
@@ -41,32 +41,32 @@ RSpec.describe CsvUtils::Sorter do
 
   it "sorts a CSV file with compound keys" do
     sorter = CsvUtils::Sorter.new(source_id, source_key, [0, 1], nil, 100)
-    sorter.add_row(["1", "2", "3"])
-    sorter.add_row(["1", "3", "2"])
-    sorter.add_row(["3", "1", "3"])
-    sorter.add_row(["2", "3", "1"])
-    sorter.add_row(["3", "1", "2"])
-    sorter.add_row(["3", "2", "2"])
-    sorter.add_row(["3", "2", "1"])
+    sorter.add_row(["1", "2", "3"], 0)
+    sorter.add_row(["1", "3", "2"], 1)
+    sorter.add_row(["3", "1", "3"], 2)
+    sorter.add_row(["2", "3", "1"], 3)
+    sorter.add_row(["3", "1", "2"], 4)
+    sorter.add_row(["3", "2", "2"], 5)
+    sorter.add_row(["3", "2", "1"], 6)
     result = sorter.sort!
     expect(result[:total_rows]).to eq(7)
     expect(collect_rows(sorter)).to eq(
       [
         ["1", "2", "3"], 
-        ["3", "2", "2"], 
         ["3", "2", "1"], 
+        ["3", "2", "2"],
         ["2", "3", "1"], 
         ["1", "3", "2"], 
-        ["3", "1", "3"], 
-        ["3", "1", "2"]
+        ["3", "1", "2"], 
+        ["3", "1", "3"]
       ]
     )
   end
 
   it "yields batches of sorted rows" do
     sorter = CsvUtils::Sorter.new(source_id, source_key, [0, 1], nil, 100)
-    sorter.add_row(["1", "2", "3"])
-    sorter.add_row(["4", "5", "6"])
+    sorter.add_row(["1", "2", "3"], 0)
+    sorter.add_row(["4", "5", "6"], 1)
     result = sorter.sort!
     expect(result[:total_rows]).to eq(2)
     count = 0
@@ -79,10 +79,10 @@ RSpec.describe CsvUtils::Sorter do
 
   it "yields multiple results in a batch" do
     sorter = CsvUtils::Sorter.new(source_id, source_key, [0, 1], nil, 100)
-    sorter.add_row(["1", "2", "3"])
-    sorter.add_row(["1", "3", "2"])
-    sorter.add_row(["3", "1", "3"])
-    sorter.add_row(["2", "3", "1"])
+    sorter.add_row(["1", "2", "3"], 0)
+    sorter.add_row(["1", "3", "2"], 1)
+    sorter.add_row(["3", "1", "3"], 2)
+    sorter.add_row(["2", "3", "1"], 3)
 
     result = sorter.sort!
     expect(result[:total_rows]).to eq(4)
@@ -102,8 +102,8 @@ RSpec.describe CsvUtils::Sorter do
   it "validates on add_row" do
     sorter = CsvUtils::Sorter.new(source_id, source_key, [0], nil, 100)
     sorter.enable_validation([{column_name: "my_url", validation_type: :url}], error_log_path)
-    sorter.add_row(["https://example.com"])
-    sorter.add_row(["test.com"])
+    sorter.add_row(["https://example.com"], 0)
+    sorter.add_row(["test.com"], 1)
 
     result = sorter.sort!
     expect(result[:failed_url_error_count]).to eq(1)    
@@ -118,8 +118,8 @@ RSpec.describe CsvUtils::Sorter do
 
     it "writes a binary postgres file" do
       sorter = CsvUtils::Sorter.new(source_id, source_key, [0, 1], nil, 100)
-      sorter.add_row(["1", "2", "3"])
-      sorter.add_row(["4", "5", "6"])
+      sorter.add_row(["1", "2", "3"], 0)
+      sorter.add_row(["4", "5", "6"], 1)
       sorter.sort!
       sorter.write_binary_postgres_file(outfile_path)
       expect(File.exist?(outfile_path)).to be_truthy
@@ -150,8 +150,8 @@ RSpec.describe CsvUtils::Sorter do
 
     it "writes a binary postgres file with geometry" do
       sorter = CsvUtils::Sorter.new(source_id, source_key, [0, 1], [2, 3], 100)
-      sorter.add_row(["1", "hello", "-74.006", "40.7128"])
-      sorter.add_row(["4", "world", "-71.006", "44.7128"])
+      sorter.add_row(["1", "hello", "-74.006", "40.7128"], 0)
+      sorter.add_row(["4", "world", "-71.006", "44.7128"], 1)
       sorter.sort!
       sorter.write_binary_postgres_file(outfile_path)
       `cp #{outfile_path} /tmp/bincopy.bin`
