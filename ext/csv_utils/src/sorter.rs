@@ -267,7 +267,7 @@ impl SorterInner {
             // Serialize record to bytes
             self.buf.clear();
             let length =
-                bincode::encode_into_std_write(&rec, &mut self.buf, bincode::config::legacy())
+                bincode::encode_into_std_write(rec, &mut self.buf, bincode::config::legacy())
                     .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
 
             // Write length as u32 (4 bytes)
@@ -319,10 +319,7 @@ impl Sorter {
     ) -> Result<Self, Error> {
         let buffer_size_bytes = buffer_size_mb * 1024 * 1024;
 
-        let geo_columns = match geo_columns_vec {
-            Some(indexes) => Some((indexes[0], indexes[1])),
-            None => None,
-        };
+        let geo_columns = geo_columns_vec.map(|indexes| (indexes[0], indexes[1]));
 
         let output_file = match NamedTempFile::new() {
             Ok(file) => file,
@@ -566,13 +563,11 @@ impl Sorter {
             }
 
             // If the batch is full, complete the target_key run and then start a new batch
-            if current_batch.len() >= batch_size {
-                if target_key != last_key {
-                    let args = RArray::new();
-                    let _ = args.push(current_batch);
-                    block.call::<_, Value>(args)?;
-                    current_batch = RArray::new();
-                }
+            if current_batch.len() >= batch_size && target_key != last_key {
+                let args = RArray::new();
+                let _ = args.push(current_batch);
+                block.call::<_, Value>(args)?;
+                current_batch = RArray::new();
             }
 
             last_key = target_key.clone();
@@ -600,7 +595,7 @@ impl Sorter {
 
         let mut copier = PostgresCopier::new(
             input_file_path,
-            inner.geo_columns.clone(),
+            inner.geo_columns,
             inner.source_id.clone(),
         )
         .map_err(|e| Error::new(magnus::exception::runtime_error(), e.to_string()))?;

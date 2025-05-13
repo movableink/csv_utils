@@ -135,11 +135,9 @@ impl Validator {
                 ValidationType::Invalid => continue,
                 ValidationType::Ignore => continue,
                 ValidationType::Url => {
-                    if !field.is_empty() {
-                        if let Err(_) = Url::parse(field) {
-                            failed_url = true;
-                            errors_to_log.push(("url", col_idx, rule.column_name.clone()));
-                        }
+                    if !field.is_empty() && Url::parse(field).is_err() {
+                        failed_url = true;
+                        errors_to_log.push(("url", col_idx, rule.column_name.clone()));
                     }
                 }
                 ValidationType::Protocol => {
@@ -180,12 +178,10 @@ pub fn ruby_rules_array_to_rules(rules: RArray) -> Result<Vec<ValidationRule>, E
         .map(|rule| {
             let rule = RHash::try_convert(rule)?;
             let column_name = rule
-                .aref::<Symbol, Value>(column_name_key)
-                .or_else(|_| Err(Error::new(arg_error(), "Missing column_name")))?
+                .aref::<Symbol, Value>(column_name_key).map_err(|_| Error::new(arg_error(), "Missing column_name"))?
                 .to_string();
             let validation_type_str = rule
-                .aref::<Symbol, Value>(validation_type_key)
-                .or_else(|_| Err(Error::new(arg_error(), "Missing validation_type")))?
+                .aref::<Symbol, Value>(validation_type_key).map_err(|_| Error::new(arg_error(), "Missing validation_type"))?
                 .to_string();
 
             match ValidationType::from_string(validation_type_str.as_str()) {
