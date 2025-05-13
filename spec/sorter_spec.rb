@@ -27,10 +27,11 @@ end
 
 RSpec.describe CsvUtils::Sorter do
   let(:source_id) { "1" }
+  let(:source_key) { "12345abcdef" }
   let(:error_log_path) { Tempfile.new.path }
 
   it "should sort a CSV file" do
-    sorter = CsvUtils::Sorter.new(source_id, [0], nil, 100)
+    sorter = CsvUtils::Sorter.new(source_id, source_key, [0], nil, 100)
     sorter.add_row(["1", "2", "3"])
     sorter.add_row(["4", "5", "6"])
     result = sorter.sort!
@@ -39,7 +40,7 @@ RSpec.describe CsvUtils::Sorter do
   end
 
   it "sorts a CSV file with compound keys" do
-    sorter = CsvUtils::Sorter.new(source_id, [0, 1], nil, 100)
+    sorter = CsvUtils::Sorter.new(source_id, source_key, [0, 1], nil, 100)
     sorter.add_row(["1", "2", "3"])
     sorter.add_row(["1", "3", "2"])
     sorter.add_row(["3", "1", "3"])
@@ -63,7 +64,7 @@ RSpec.describe CsvUtils::Sorter do
   end
 
   it "yields batches of sorted rows" do
-    sorter = CsvUtils::Sorter.new(source_id, [0, 1], nil, 100)
+    sorter = CsvUtils::Sorter.new(source_id, source_key, [0, 1], nil, 100)
     sorter.add_row(["1", "2", "3"])
     sorter.add_row(["4", "5", "6"])
     result = sorter.sort!
@@ -77,7 +78,7 @@ RSpec.describe CsvUtils::Sorter do
   end
 
   it "yields multiple results in a batch" do
-    sorter = CsvUtils::Sorter.new(source_id, [0, 1], nil, 100)
+    sorter = CsvUtils::Sorter.new(source_id, source_key, [0, 1], nil, 100)
     sorter.add_row(["1", "2", "3"])
     sorter.add_row(["1", "3", "2"])
     sorter.add_row(["3", "1", "3"])
@@ -99,7 +100,7 @@ RSpec.describe CsvUtils::Sorter do
   end
 
   it "validates on add_row" do
-    sorter = CsvUtils::Sorter.new(source_id, [0], nil, 100)
+    sorter = CsvUtils::Sorter.new(source_id, source_key, [0], nil, 100)
     sorter.enable_validation([{column_name: "my_url", validation_type: :url}], error_log_path)
     sorter.add_row(["https://example.com"])
     sorter.add_row(["test.com"])
@@ -116,7 +117,7 @@ RSpec.describe CsvUtils::Sorter do
     let(:outfile_path) { Tempfile.new.path }
 
     it "writes a binary postgres file" do
-      sorter = CsvUtils::Sorter.new(source_id, [0, 1], nil, 100)
+      sorter = CsvUtils::Sorter.new(source_id, source_key, [0, 1], nil, 100)
       sorter.add_row(["1", "2", "3"])
       sorter.add_row(["4", "5", "6"])
       sorter.sort!
@@ -129,7 +130,7 @@ RSpec.describe CsvUtils::Sorter do
       decoder.each { |result| results << result }
       expect(results).to match_array([
         [
-          "1",
+          source_key,
           "d2736c67cf4728de554175f2533dc6662522db5b",
           nil,
           ["4", "5", "6"],
@@ -137,7 +138,7 @@ RSpec.describe CsvUtils::Sorter do
           anything
         ],
        [
-          "1",
+          source_key,
           "6ea87ee6f25f25d1e14c442a890eda7c722bca7a",
           nil,
           ["1", "2", "3"],
@@ -148,7 +149,7 @@ RSpec.describe CsvUtils::Sorter do
     end
 
     it "writes a binary postgres file with geometry" do
-      sorter = CsvUtils::Sorter.new(source_id, [0, 1], [2, 3], 100)
+      sorter = CsvUtils::Sorter.new(source_id, source_key, [0, 1], [2, 3], 100)
       sorter.add_row(["1", "hello", "-74.006", "40.7128"])
       sorter.add_row(["4", "world", "-71.006", "44.7128"])
       sorter.sort!
@@ -163,7 +164,7 @@ RSpec.describe CsvUtils::Sorter do
 
       expect(results).to match_array([
         [
-          "1",
+          source_key,
           "81dda56703aa9978ce2bc1212c9d96b7ddcbf599",
           generate_binary_ewkb(-71.006, 44.7128, 4326),
           ["4", "world", "-71.006", "44.7128"],
@@ -171,7 +172,7 @@ RSpec.describe CsvUtils::Sorter do
           anything
         ],
         [
-          "1",
+          source_key,
           "7ff8c9efec43aadca084abbf7ef9da0d0b65fb84",
           generate_binary_ewkb(-74.006, 40.7128, 4326),
           ["1", "hello", "-74.006", "40.7128"],

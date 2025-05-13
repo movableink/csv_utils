@@ -25,6 +25,7 @@ pub struct Sorter {
 // Inner state that can be mutated through RefCell
 struct SorterInner {
     source_id: String,
+    source_key: String,
     key_columns: Vec<usize>,
     geo_columns: Option<GeoIndexes>,
     current_batch: Vec<SortRecord>,
@@ -313,6 +314,7 @@ impl SorterInner {
 impl Sorter {
     pub fn new(
         source_id: String,
+        source_key: String,
         key_columns: Vec<usize>,
         geo_columns_vec: Option<Vec<usize>>,
         buffer_size_mb: usize,
@@ -334,6 +336,7 @@ impl Sorter {
         Ok(Self {
             inner: RefCell::new(SorterInner {
                 source_id,
+                source_key,
                 key_columns,
                 geo_columns,
                 current_batch: Vec::new(),
@@ -596,7 +599,7 @@ impl Sorter {
         let mut copier = PostgresCopier::new(
             input_file_path,
             inner.geo_columns,
-            inner.source_id.clone(),
+            inner.source_key.clone(),
         )
         .map_err(|e| Error::new(magnus::exception::runtime_error(), e.to_string()))?;
 
@@ -610,7 +613,7 @@ impl Sorter {
 
 pub fn register(ruby: &Ruby, module: &RModule) -> Result<(), Error> {
     let class = module.define_class("Sorter", ruby.class_object())?;
-    class.define_singleton_method("new", function!(Sorter::new, 4))?;
+    class.define_singleton_method("new", function!(Sorter::new, 5))?;
     class.define_method("enable_validation", method!(Sorter::enable_validation, 2))?;
     class.define_method("add_row", method!(Sorter::add_row, 1))?;
     class.define_method("add_file", method!(Sorter::add_file, 1))?;
