@@ -10,6 +10,8 @@ use postgres::types::Kind;
 use crate::sorter::SortRecord;
 pub type GeoIndexes = (usize, usize);
 
+const BUFFER_CAPACITY: usize = 5 * 1024 * 1024;
+
 pub struct PostgresCopier {
   reader: BufReader<File>,
   geo_indexes: Option<GeoIndexes>,
@@ -18,7 +20,7 @@ pub struct PostgresCopier {
 
 impl PostgresCopier {
   pub fn new(input_file: &Path, geo_indexes: Option<GeoIndexes>, source_key: String) -> Result<Self, std::io::Error> {
-    let reader = BufReader::new(File::open(input_file)?);
+    let reader = BufReader::with_capacity(BUFFER_CAPACITY, File::open(input_file)?);
     
     Ok(Self { reader, geo_indexes, source_key })
   }
@@ -36,9 +38,9 @@ impl PostgresCopier {
         return Some(Err(e));
       }
       
-      let record: SortRecord = match bincode::deserialize(&bytes) {
-        Ok(r) => r,
-        Err(e) => return Some(Err(std::io::Error::new(std::io::ErrorKind::InvalidData, e))),
+      let record: SortRecord = match bincode::decode_from_slice(&bytes, bincode::config::legacy()) {
+        Ok((record, _)) => record,
+        Err(e) => return Some(Err(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))
       };
 
       let target_key = record.key.value;

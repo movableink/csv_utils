@@ -1,0 +1,88 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "bundler/setup"
+require "csv_utils"
+require "optparse"
+
+# Parse command-line arguments
+options = {}
+OptionParser.new do |opts|
+  opts.banner = "Usage: encode INPUT_FILE OUTPUT_FILE [options]"
+  
+  opts.on("-k", "--key-columns COL1,COL2,...", Array, "Columns to use as keys for sorting (0-based)") do |cols|
+    options[:key_columns] = cols.map(&:to_i)
+  end
+  
+  opts.on("-g", "--geo-columns LAT,LON", Array, "Columns to use as geographic coordinates (0-based)") do |cols|
+    options[:geo_columns] = cols.map(&:to_i)
+  end
+  
+  opts.on("-b", "--buffer-size SIZE", Integer, "Buffer size in MB (default: 300)") do |size|
+    options[:buffer_size] = size
+  end
+  
+  opts.on("-s", "--source-id ID", "Source ID (default: 'default')") do |id|
+    options[:source_id] = id
+  end
+  
+  opts.on("-h", "--help", "Show this help message") do
+    puts opts
+    exit
+  end
+end.parse!
+
+# Check required arguments
+if ARGV.length < 2
+  puts "Error: Both INPUT_FILE and OUTPUT_FILE are required"
+  puts "Usage: encode INPUT_FILE OUTPUT_FILE [options]"
+  exit 1
+end
+
+input_file = ARGV[0]
+output_file = ARGV[1]
+
+# Set default options
+options[:key_columns] ||= [0]  # Default to first column as key
+options[:buffer_size] ||= 300  # Default 300MB buffer
+options[:source_id] ||= "default"
+
+# Create and configure the sorter
+source_id = options[:source_id]
+key_columns = options[:key_columns]
+geo_columns = options[:geo_columns]
+buffer_size = options[:buffer_size]
+
+puts "Initializing sorter with:"
+puts "  - Source ID: #{source_id}"
+puts "  - Key columns: #{key_columns.join(', ')}"
+puts "  - Geo columns: #{geo_columns ? geo_columns.join(', ') : 'none'}"
+puts "  - Buffer size: #{buffer_size}MB"
+
+# Initialize the sorter
+sorter = CsvUtils::Sorter.new(source_id, key_columns, geo_columns, buffer_size)
+
+# Process the input file
+puts "Processing file: #{input_file}"
+start_time = Time.now
+sorter.add_file(input_file)
+add_time = Time.now - start_time
+puts "Add time: #{add_time} seconds"
+
+# Sort the data
+puts "Sorting data..."
+start_time = Time.now
+result = sorter.sort!
+sort_time = Time.now - start_time
+puts "Sorting time: #{sort_time} seconds"
+puts "Total rows: #{result[:total_rows]}"
+
+# Write the output file
+puts "Writing output to: #{output_file}"
+start_time = Time.now
+sorter.write_binary_postgres_file(output_file)
+write_time = Time.now - start_time
+puts "Writing time: #{write_time} seconds"
+
+puts "Complete! Total processing time: #{add_time + sort_time + write_time} seconds"
+

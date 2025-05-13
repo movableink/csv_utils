@@ -7,13 +7,14 @@ use std::{
     path::Path,
 };
 use serde::{Serialize, Deserialize};
-use bincode;
+use bincode::{Encode, Decode};
 use tempfile::NamedTempFile;
 use magnus::{prelude::*, Error, method, function, Ruby, Symbol, RHash, RArray, Value, RModule};
 use sha1::{Sha1, Digest};
 use crate::validator::{ruby_rules_array_to_rules, Validator};
 use crate::postgres_copier::{PostgresCopier, GeoIndexes};
 
+const BUFFER_CAPACITY: usize = 1 * 1024 * 1024;
 const DEFAULT_MAX_TARGETING_KEY_ROWS: usize = 200;
 
 #[magnus::wrap(class = "CsvUtils::Sorter")]
@@ -39,10 +40,11 @@ struct SorterInner {
     max_targeting_key_rows: usize,
 
     validator: Option<Validator>,
+    buf: Vec<u8>,
 }
 
 // Serializable record for run files
-#[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
+#[derive(Encode, Decode, Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
 pub struct SortRecord {
     pub key: KeyData,
     pub record: Vec<String>,
@@ -69,7 +71,7 @@ impl PartialOrd for SortRecord {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Encode, Decode, Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct KeyData {
     pub hash: u64,
     pub value: String,
@@ -138,16 +140,16 @@ impl SorterInner {
         
         let temp = NamedTempFile::new()?;
         {
-            let mut buf = Vec::with_capacity(8192);
-            let mut w = BufWriter::with_capacity(5 * 1024 * 1024, &temp);
+            let mut w = BufWriter::with_capacity(BUFFER_CAPACITY, &temp);
             
-            for sort_record in self.current_batch.drain(..) {                
-                buf.clear();
-                bincode::serialize_into(&mut buf, &sort_record)
+            for sort_record in self.current_batch.drain(..) {      
+                w.write_all(&sort_record.key.hash.to_le_bytes())?;
+
+                self.buf.clear();
+                let length = bincode::encode_into_std_write(&sort_record, &mut self.buf, bincode::config::legacy())
                     .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-                
-                w.write_all(&(buf.len() as u32).to_le_bytes())?;
-                w.write_all(&buf)?;
+                w.write_all(&(length as u32).to_le_bytes())?;
+                w.write_all(&self.buf)?;
             }
             w.flush()?;
         }
@@ -165,15 +167,17 @@ impl SorterInner {
         let mut readers = Vec::new();
         for temp_file in &self.temp_files {
             if let Ok(file) = File::open(temp_file.path()) {
-                let mut reader = BufReader::with_capacity(5 * 1024 * 1024, file);
+                let mut reader = BufReader::with_capacity(BUFFER_CAPACITY, file);
                 
-                let mut len_bytes = [0u8; 4];
-                if reader.read_exact(&mut len_bytes).is_ok() {
-                    let len = u32::from_le_bytes(len_bytes) as usize;
-                    let mut bytes = vec![0u8; len];
-                    if reader.read_exact(&mut bytes).is_ok() {
-                        if let Ok(record) = bincode::deserialize::<SortRecord>(&bytes) {
-                            readers.push((Some(record), bytes, reader));
+                let mut hash_bytes = [0u8; 8];
+                if reader.read_exact(&mut hash_bytes).is_ok() {
+                    let hash = u64::from_le_bytes(hash_bytes);                
+                    let mut len_bytes = [0u8; 4];
+                    if reader.read_exact(&mut len_bytes).is_ok() {
+                        let len = u32::from_le_bytes(len_bytes) as usize;
+                        let mut bytes = vec![0u8; len];
+                        if reader.read_exact(&mut bytes).is_ok() {
+                            readers.push((hash, bytes, reader));
                         }
                     }
                 }
@@ -183,32 +187,35 @@ impl SorterInner {
         let mut heap = BinaryHeap::new();
         
         // Initialize the heap with first record from each reader
-        for (i, (record, _, _)) in readers.iter().enumerate() {
-            if let Some(rec) = record {
-                // Use a tuple ordering to create a min-heap
-                heap.push(std::cmp::Reverse((rec.key.clone(), i)));
-            }
+        for (i, (hash, _, _)) in readers.iter().enumerate() {
+            // Use a tuple ordering to create a min-heap
+            heap.push(std::cmp::Reverse((*hash, i)));
         }
         
         self.output_file = NamedTempFile::new()?;
-        let mut w = BufWriter::with_capacity(5 * 1024 * 1024, &self.output_file);
+        let mut w = BufWriter::with_capacity(BUFFER_CAPACITY, &self.output_file);
         let mut count = 0;
+
+        let mut hash_bytes = [0u8; 8];
+        let mut next_hash: u64;
         
         while let Some(std::cmp::Reverse((_, src_idx))) = heap.pop() {
-            if let Some((record, record_bytes, reader)) = readers.get_mut(src_idx) {
+            if let Some((hash, record_bytes, reader)) = readers.get_mut(src_idx) {
                 w.write_all(&(record_bytes.len() as u32).to_le_bytes())?;
                 w.write_all(&record_bytes)?;
                 count += 1;
                 
-                // Read next record from this source
-                let mut len_bytes = [0u8; 4];
-                if reader.read_exact(&mut len_bytes).is_ok() {
-                    let len = u32::from_le_bytes(len_bytes) as usize;
-                    let mut bytes = vec![0u8; len];
-                    if reader.read_exact(&mut bytes).is_ok() {
-                        if let Ok(next_rec) = bincode::deserialize::<SortRecord>(&bytes) {
-                            heap.push(std::cmp::Reverse((next_rec.key.clone(), src_idx)));
-                            *record = Some(next_rec);
+                if reader.read_exact(&mut hash_bytes).is_ok() {
+                
+                    // Read next record from this source
+                    let mut len_bytes = [0u8; 4];
+                    if reader.read_exact(&mut len_bytes).is_ok() {
+                        let len = u32::from_le_bytes(len_bytes) as usize;
+                        let mut bytes = vec![0u8; len];
+                        if reader.read_exact(&mut bytes).is_ok() {
+                            next_hash = u64::from_le_bytes(hash_bytes);
+                            heap.push(std::cmp::Reverse((next_hash, src_idx)));
+                            *hash = next_hash;
                             *record_bytes = bytes;
                         }
                     }
@@ -242,17 +249,18 @@ impl SorterInner {
 
     fn write_records(&mut self) -> io::Result<usize> {
         self.output_file = NamedTempFile::new()?;
-        let mut w = BufWriter::with_capacity(5 * 1024 * 1024, &self.output_file);
+        let mut w = BufWriter::with_capacity(BUFFER_CAPACITY, &self.output_file);
         let mut count = 0;
         for rec in self.current_batch.iter() {
             // Serialize record to bytes
-            let bytes = bincode::serialize::<SortRecord>(&rec)
+            self.buf.clear();
+            let length = bincode::encode_into_std_write(&rec, &mut self.buf, bincode::config::legacy())
                 .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
             
             // Write length as u32 (4 bytes)
-            w.write_all(&(bytes.len() as u32).to_le_bytes())?;
+            w.write_all(&(length as u32).to_le_bytes())?;
             // Write the record bytes
-            w.write_all(&bytes)?;
+            w.write_all(&self.buf)?;
             count += 1;
         }
         w.flush()?;
@@ -315,6 +323,7 @@ impl Sorter {
                 observed_max_row_size: 0,
                 max_targeting_key_rows: DEFAULT_MAX_TARGETING_KEY_ROWS,
                 validator: None,
+                buf: Vec::with_capacity(BUFFER_CAPACITY),
             })
         })
     }
@@ -338,7 +347,7 @@ impl Sorter {
             hash: SorterInner::hash_key(&key_str),
             value: key_str,
         };
-        
+                
         let row_size = SorterInner::estimate_row_size(&key, &row);
         
         // Check if adding this row would exceed buffer size        
@@ -483,7 +492,7 @@ impl Sorter {
             ));
         }
         
-        let mut reader = BufReader::new(&inner.output_file);
+        let mut reader = BufReader::with_capacity(BUFFER_CAPACITY, &inner.output_file);
         let mut current_batch: RArray = RArray::new();
         let mut last_key = String::new();
         let mut run_length = 0;
@@ -499,8 +508,8 @@ impl Sorter {
             reader.read_exact(&mut bytes)
                 .map_err(|e| Error::new(magnus::exception::runtime_error(), e.to_string()))?;
             
-            let record: SortRecord = bincode::deserialize::<SortRecord>(&bytes)
-                .map_err(|e| Error::new(magnus::exception::runtime_error(), e.to_string()))?;
+            let record: SortRecord = bincode::decode_from_slice(&bytes, bincode::config::legacy())
+                .map_err(|e| Error::new(magnus::exception::runtime_error(), e.to_string()))?.0;
             
             let target_key = record.key.value;            
 

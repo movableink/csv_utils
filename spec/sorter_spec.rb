@@ -181,19 +181,4 @@ RSpec.describe CsvUtils::Sorter do
       ])
     end
   end
-
-  # it "handles a large file" do
-  #   start_time = Time.now
-  #   sorter = CsvUtils::Sorter.new(source_id, [0], nil, 300)    
-  #   sorter.add_file("/Users/mnutt/tmp/8a4b3fe2acc04b12f264a8f99ac14db7/VS_DV_EmailCouponFeed.csv")
-  #   add_time = Time.now - start_time
-  #   puts "Add time: #{add_time} seconds"
-  #   start_time = Time.now
-  #   result = sorter.sort!
-  #   puts "Sorting time: #{Time.now - start_time} seconds"
-  #   puts result.inspect
-  #   start_time = Time.now
-  #   sorter.write_binary_postgres_file("/tmp/coupons.bin")
-  #   puts "Writing time: #{Time.now - start_time} seconds"
-  # end
 end
