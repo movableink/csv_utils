@@ -414,21 +414,29 @@ impl Sorter {
         let file = File::open(file_path)
             .map_err(|e| Error::new(magnus::exception::runtime_error(), e.to_string()))?;
         let mut reader = csv::Reader::from_reader(file);
+        // Allocate a buffer for the record
+        let mut record = csv::StringRecord::new();
+        let mut position = 0;
 
-        for (position, result) in reader.records().enumerate() {
-            match result {
-                Ok(record) => {
-                    // Convert StringRecord to Vec<String>
-                    let row: Vec<String> = record.iter().map(|field| field.to_string()).collect();
+        loop {
+            match reader.read_record(&mut record) {
+                Ok(true) => {
+                    // Convert ByteRecord to Vec<String>
+                    let row: Vec<String> = record.iter()
+                        .map(|field| field.to_string())
+                        .collect();
+                    
                     self.add_row(row, position);
-                }
+                    position += 1;
+                },
+                Ok(false) => break, // End of file
                 Err(e) => {
                     if let Some(validator) = &mut self.inner.borrow_mut().validator {
                         let _ = validator.add_error_to_file("parse", 0, 0, &e.to_string());
                         validator.parse_error_count += 1;
                     }
+                    position += 1;
                     // Continue processing other records
-                    continue;
                 }
             }
         }
