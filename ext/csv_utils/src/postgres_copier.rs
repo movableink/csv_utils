@@ -11,6 +11,7 @@ use std::time::SystemTime;
 pub type GeoIndexes = (usize, usize);
 
 const BUFFER_CAPACITY: usize = 5 * 1024 * 1024;
+const HEX_DIGITS: &[u8; 16] = b"0123456789abcdef";
 
 pub struct PostgresCopier {
     reader: BufReader<File>,
@@ -35,7 +36,7 @@ impl PostgresCopier {
 
     fn iter_records(
         &mut self,
-    ) -> impl Iterator<Item = Result<(String, Option<Point>, Vec<String>), std::io::Error>> + '_
+    ) -> impl Iterator<Item = Result<([u8; 20], Option<Point>, Vec<String>), std::io::Error>> + '_
     {
         std::iter::from_fn(move || {
             let mut len_bytes = [0u8; 4];
@@ -99,8 +100,13 @@ impl PostgresCopier {
 
         for result in self.iter_records() {
             let (target_key, geo_key, record) = result?;
+            let mut hex = String::with_capacity(40);
+            for &byte in &target_key {
+                hex.push(HEX_DIGITS[(byte >> 4) as usize] as char);
+                hex.push(HEX_DIGITS[(byte & 0xf) as usize] as char);
+            }
             let row: Vec<&(dyn ToSql + Sync)> =
-                vec![&source_key, &target_key, &geo_key, &record, &now, &now];
+                vec![&source_key, &hex, &geo_key, &record, &now, &now];
             writer.write_row(&row)?;
         }
 

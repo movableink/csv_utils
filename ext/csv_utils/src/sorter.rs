@@ -67,7 +67,7 @@ impl PartialOrd for SortRecord {
 #[derive(Encode, Decode, Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct KeyData {
     pub hash: u64,
-    pub value: String,
+    pub value: [u8; 20],
     pub position: usize,
 }
 
@@ -90,7 +90,7 @@ impl PartialOrd for KeyData {
 
 impl SorterInner {
     // Generate a composite key from source_id + row values using SHA1, joined by commas
-    fn generate_targeting_key(&self, row: &[String]) -> String {
+    fn generate_targeting_key(&self, row: &[String]) -> [u8; 20] {
         let mut hasher = Sha1::new();
         hasher.update(self.source_id.as_bytes());
 
@@ -101,20 +101,18 @@ impl SorterInner {
             }
         }
 
-        let digest = hasher.finalize();
-        format!("{:x}", digest)
+        hasher.finalize().into()
     }
 
-    fn hash_key(key: &str) -> u64 {
+    fn hash_key(key: &[u8; 20]) -> u64 {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         key.hash(&mut hasher);
         hasher.finish()
     }
 
-    fn estimate_row_size(key: &KeyData, row: &[String]) -> usize {
-        let key_size = key.value.len() + std::mem::size_of::<KeyData>();
-        let size_of_string = std::mem::size_of::<String>();
-        let row_size: usize = row.iter().map(|s| s.len() + size_of_string).sum();
+    fn estimate_row_size(row: &[String]) -> usize {
+        let key_size = std::mem::size_of::<KeyData>();
+        let row_size: usize = row.iter().map(|s| s.len()).sum();
 
         key_size + row_size
     }
@@ -132,16 +130,13 @@ impl SorterInner {
             let mut w = BufWriter::with_capacity(BUFFER_CAPACITY, &temp);
 
             for sort_record in self.current_batch.drain(..) {
-                // First, write the hash as a little endian u64
-                self.buf.clear();
-                let key_length = bincode::encode_into_std_write(
+                // First, write the key data
+                bincode::encode_into_std_write(
                     &sort_record.key,
-                    &mut self.buf,
+                    &mut w,
                     bincode::config::legacy(),
                 )
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-                w.write_all(&(key_length as u32).to_le_bytes())?;
-                w.write_all(&self.buf)?;
+                  .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
 
                 // Write bincode into a buffer so we can record the size of the record
                 self.buf.clear();
@@ -150,9 +145,9 @@ impl SorterInner {
                     &mut self.buf,
                     bincode::config::legacy(),
                 )
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+                  .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
 
-                // [size of record] [record bytes] will make it easy to read the record back in later
+                // [key] [size of record] [record bytes] will make it easy to read the record back in later
                 w.write_all(&(length as u32).to_le_bytes())?;
                 w.write_all(&self.buf)?;
             }
@@ -169,30 +164,27 @@ impl SorterInner {
             return Ok(0);
         }
 
+        // Allocate a buffer for the key data of the size of the KeyData struct
+        let mut key_bytes = bincode::encode_to_vec(&KeyData {
+            hash: 0,
+            value: [0u8; 20],
+            position: 0,
+        }, bincode::config::legacy())
+          .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+
         // Prepare readers with their first records
         let mut readers = Vec::with_capacity(self.temp_files.len());
         for temp_file in &self.temp_files {
             let file = File::open(temp_file.path())?;
             let mut reader = BufReader::with_capacity(BUFFER_CAPACITY, file);
 
-            // Read first record (key_length, key, record_length, record)
-            let mut key_length_bytes = [0u8; 4];
-            if reader.read_exact(&mut key_length_bytes).is_err() {
-                continue; // Skip empty files
+            if reader.read_exact(&mut key_bytes).is_err() {
+                continue;
             }
-            //println!("key_length_bytes: {:?}", key_length_bytes);
-
-            let key_length = u32::from_le_bytes(key_length_bytes) as usize;
-            //println!("key_length: {:?}", key_length);
-            let mut key_bytes = vec![0u8; key_length];
-            reader.read_exact(&mut key_bytes)?;
-            //println!("key_bytes: {:?}", key_bytes);
 
             let (key, _): (KeyData, usize) =
                 bincode::decode_from_slice(&key_bytes, bincode::config::legacy())
                     .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-
-            //println!("key: {:?}", key);
 
             let mut record_length_bytes = [0u8; 4];
             reader.read_exact(&mut record_length_bytes)?;
@@ -223,24 +215,14 @@ impl SorterInner {
                 writer.write_all(record_bytes)?;
                 count += 1;
 
-                // Try to read next record from this source
-                let mut key_length_bytes = [0u8; 4];
-                if reader.read_exact(&mut key_length_bytes).is_err() {
-                    continue; // No more records in this reader
+                if reader.read_exact(&mut key_bytes).is_err() {
+                    // No more records in this reader
+                    continue;
                 }
-
-                let key_length = u32::from_le_bytes(key_length_bytes) as usize;
-                //println!("key_length: {:?}", key_length);
-                let mut key_bytes = vec![0u8; key_length];
-                reader.read_exact(&mut key_bytes)?;
-
-                //println!("key_bytes: {:?}", key_bytes);
 
                 let (next_key, _): (KeyData, usize) =
                     bincode::decode_from_slice(&key_bytes, bincode::config::legacy())
                         .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-
-                //println!("next_key: {:?}", next_key);
 
                 let mut record_length_bytes = [0u8; 4];
                 reader.read_exact(&mut record_length_bytes)?;
@@ -310,7 +292,7 @@ impl SorterInner {
             .map(|sort_record| {
                 // Size of KeyData struct
                 let key_size =
-                    std::mem::size_of_val(&sort_record.key) + sort_record.key.value.capacity();
+                    std::mem::size_of_val(&sort_record.key) + std::mem::size_of::<[u8; 20]>();
 
                 // Size of Vec<String> and its contents
                 let row_size = std::mem::size_of_val(&sort_record.record)
@@ -385,14 +367,14 @@ impl Sorter {
     pub fn add_row(&self, row: Vec<String>, position: usize) -> bool {
         let mut inner = self.inner.borrow_mut();
 
-        let key_str = inner.generate_targeting_key(&row);
+        let key_bytes = inner.generate_targeting_key(&row);
         let key = KeyData {
-            hash: SorterInner::hash_key(&key_str),
-            value: key_str,
+            hash: SorterInner::hash_key(&key_bytes),
+            value: key_bytes,
             position,
         };
 
-        let row_size = SorterInner::estimate_row_size(&key, &row);
+        let row_size = SorterInner::estimate_row_size(&row);
 
         // Check if adding this row would exceed buffer size
         if inner.current_buffer_size + row_size > inner.buffer_size_bytes
@@ -550,7 +532,7 @@ impl Sorter {
 
         let mut reader = BufReader::with_capacity(BUFFER_CAPACITY, &inner.output_file);
         let mut current_batch: RArray = RArray::new();
-        let mut last_key = String::new();
+        let mut last_key = [0u8; 20];
         let mut run_length = 0;
 
         loop {
@@ -594,7 +576,8 @@ impl Sorter {
             last_key = target_key.clone();
 
             let item = RArray::new();
-            let _ = item.push(target_key);
+            let key_hex = target_key.iter().map(|b| format!("{:02x}", b)).collect::<String>();
+            let _ = item.push(key_hex);
             let _ = item.push(record.record);
             let _ = current_batch.push(item);
         }

@@ -11,9 +11,9 @@ RSpec.describe CsvUtils::Validator do
   describe "Repeated calls to validate_row" do
     it "returns the same status" do
       validator = CsvUtils::Validator.new([
-        {column_name: "url", validation_type: :url},
-        {column_name: "url2", validation_type: :url}
-      ], error_log_path)
+                                            { column_name: "url", validation_type: :url },
+                                            { column_name: "url2", validation_type: :url }
+                                          ], error_log_path)
       expect(validator.validate_row(["https://example.com", "test.com"])).to eq(false)
       expect(validator.validate_row(["https://example2.com", "test2.com"])).to eq(false)
       expect(validator.status[:total_rows]).to eq(2)
@@ -29,14 +29,14 @@ RSpec.describe CsvUtils::Validator do
         "https://example.com",
         "https://test.com/path?query=string#fragment"
       ]
-      
+
       # Create a pattern with URL validation for the first column
       pattern = [
-        {column_name: "name", validation_type: nil},
-        {column_name: "url", validation_type: :url},
-        {column_name: "url2", validation_type: :url}
+        { column_name: "name", validation_type: nil },
+        { column_name: "url", validation_type: :url },
+        { column_name: "url2", validation_type: :url }
       ]
-      
+
       validator = CsvUtils::Validator.new(pattern, error_log_path)
       expect(validator.validate_row(row)).to eq(true)
 
@@ -46,19 +46,19 @@ RSpec.describe CsvUtils::Validator do
       expect(validator.status[:failed_url_error_count]).to eq(0)
       expect(validator.status[:failed_protocol_error_count]).to eq(0)
     end
-    
+
     it "catches invalid URLs" do
       data = [
         "url",
         "https://example.com",
         "invalid-url-no-protocol"
       ]
-      
+
       # Create a pattern with URL validation for the first column
       pattern = [
-        {column_name: "url", validation_type: :url}
+        { column_name: "url", validation_type: :url }
       ]
-      
+
       # Expect validation to fail
       validator = CsvUtils::Validator.new(pattern, error_log_path)
       expect(validator.validate_row(data)).to eq(false)
@@ -80,15 +80,15 @@ RSpec.describe CsvUtils::Validator do
         "ftp://example.com",
         "sms://1234567890"
       ]
-      
+
       # Create a pattern with protocol validation for the first column
       pattern = [
-        {column_name: "name", validation_type: nil},
-        {column_name: "url", validation_type: :protocol},
-        {column_name: "url2", validation_type: :protocol},
-        {column_name: "url3", validation_type: :protocol}
+        { column_name: "name", validation_type: nil },
+        { column_name: "url", validation_type: :protocol },
+        { column_name: "url2", validation_type: :protocol },
+        { column_name: "url3", validation_type: :protocol }
       ]
-      
+
       # Expect no errors
       validator = CsvUtils::Validator.new(pattern, error_log_path)
       expect(validator.validate_row(data)).to eq(true)
@@ -104,14 +104,14 @@ RSpec.describe CsvUtils::Validator do
         "example.com",
         "1234567890"
       ]
-      
+
       # Create a pattern with protocol validation for the first column
       pattern = [
-        {column_name: "name", validation_type: nil},
-        {column_name: "url", validation_type: :protocol},
-        {column_name: "url2", validation_type: nil}
+        { column_name: "name", validation_type: nil },
+        { column_name: "url", validation_type: :protocol },
+        { column_name: "url2", validation_type: nil }
       ]
-      
+
       # Expect validation to fail
       validator = CsvUtils::Validator.new(pattern, error_log_path)
       expect(validator.validate_row(data)).to eq(false)
@@ -126,16 +126,16 @@ RSpec.describe CsvUtils::Validator do
 
     it "ignores nil fields" do
       data = [
-        "foo", 
+        "foo",
         ""
       ]
-      
+
       # Create a pattern with nil validation for the first column
       pattern = [
-        {column_name: "name", validation_type: nil},
-        {column_name: "url", validation_type: nil}
+        { column_name: "name", validation_type: nil },
+        { column_name: "url", validation_type: nil }
       ]
-      
+
       # Expect no errors
       validator = CsvUtils::Validator.new(pattern, error_log_path)
       expect(validator.validate_row(data)).to eq(true)
@@ -143,7 +143,7 @@ RSpec.describe CsvUtils::Validator do
       expect(validator.status[:total_rows]).to eq(1)
       expect(validator.status[:failed_url_error_count]).to eq(0)
       expect(validator.status[:failed_protocol_error_count]).to eq(0)
-    end    
+    end
   end
 
   describe "Multi validation" do
@@ -154,13 +154,13 @@ RSpec.describe CsvUtils::Validator do
         "John Doe",
         "http://example.com"
       ]
-      
+
       # Create a pattern with URL, name, and protocol validation
       pattern = [
-        {column_name: "url", validation_type: :url},
-        {column_name: "url2", validation_type: :url},
-        {column_name: "name", validation_type: nil},
-        {column_name: "url3", validation_type: :protocol}
+        { column_name: "url", validation_type: :url },
+        { column_name: "url2", validation_type: :url },
+        { column_name: "name", validation_type: nil },
+        { column_name: "url3", validation_type: :protocol }
       ]
 
       # Expect no errors
@@ -179,13 +179,13 @@ RSpec.describe CsvUtils::Validator do
         "John Doe",
         "example.com"
       ]
-      
+
       # Create a pattern with URL, name, and protocol validation
       pattern = [
-        {column_name: "url", validation_type: :url},
-        {column_name: "url2", validation_type: :url},
-        {column_name: "name", validation_type: nil},
-        {column_name: "url3", validation_type: :protocol}
+        { column_name: "url", validation_type: :url },
+        { column_name: "url2", validation_type: :url },
+        { column_name: "name", validation_type: nil },
+        { column_name: "url3", validation_type: :protocol }
       ]
 
       # Expect multiple errors
