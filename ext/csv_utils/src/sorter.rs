@@ -72,10 +72,8 @@ pub struct KeyData {
 impl Ord for KeyData {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         // Compare: hash, value, reverse position
-        (&self.value, std::cmp::Reverse(self.position)).cmp(&(
-            &other.value,
-            std::cmp::Reverse(other.position),
-        ))
+        (&self.value, std::cmp::Reverse(self.position))
+            .cmp(&(&other.value, std::cmp::Reverse(other.position)))
     }
 }
 
@@ -122,12 +120,8 @@ impl SorterInner {
 
             for sort_record in self.current_batch.drain(..) {
                 // First, write the key data
-                bincode::encode_into_std_write(
-                    &sort_record.key,
-                    &mut w,
-                    bincode::config::legacy(),
-                )
-                  .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+                bincode::encode_into_std_write(&sort_record.key, &mut w, bincode::config::legacy())
+                    .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
 
                 // Write bincode into a buffer so we can record the size of the record
                 self.buf.clear();
@@ -136,7 +130,7 @@ impl SorterInner {
                     &mut self.buf,
                     bincode::config::legacy(),
                 )
-                  .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
 
                 // [key] [size of record] [record bytes] will make it easy to read the record back in later
                 w.write_all(&(length as u32).to_le_bytes())?;
@@ -156,11 +150,14 @@ impl SorterInner {
         }
 
         // Allocate a buffer for the key data of the size of the KeyData struct
-        let mut key_bytes = bincode::encode_to_vec(&KeyData {
-            value: [0u8; 20],
-            position: 0,
-        }, bincode::config::legacy())
-          .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        let mut key_bytes = bincode::encode_to_vec(
+            &KeyData {
+                value: [0u8; 20],
+                position: 0,
+            },
+            bincode::config::legacy(),
+        )
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
 
         // Prepare readers with their first records
         let mut readers = Vec::with_capacity(self.temp_files.len());
@@ -411,13 +408,11 @@ impl Sorter {
             match reader.read_record(&mut record) {
                 Ok(true) => {
                     // Convert ByteRecord to Vec<String>
-                    let row: Vec<String> = record.iter()
-                        .map(|field| field.to_string())
-                        .collect();
-                    
+                    let row: Vec<String> = record.iter().map(|field| field.to_string()).collect();
+
                     self.add_row(row, position);
                     position += 1;
-                },
+                }
                 Ok(false) => break, // End of file
                 Err(e) => {
                     if let Some(validator) = &mut self.inner.borrow_mut().validator {
@@ -573,7 +568,10 @@ impl Sorter {
             last_key = target_key;
 
             let item = RArray::new();
-            let key_hex = target_key.iter().map(|b| format!("{:02x}", b)).collect::<String>();
+            let key_hex = target_key
+                .iter()
+                .map(|b| format!("{:02x}", b))
+                .collect::<String>();
             let _ = item.push(key_hex);
             let _ = item.push(record.record);
             let _ = current_batch.push(item);

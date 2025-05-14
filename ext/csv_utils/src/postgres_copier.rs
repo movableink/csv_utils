@@ -36,10 +36,7 @@ impl PostgresCopier {
         })
     }
 
-    fn iter_records(
-        &mut self,
-    ) -> impl Iterator<Item = Result<RowItem, std::io::Error>> + '_
-    {
+    fn iter_records(&mut self) -> impl Iterator<Item = Result<RowItem, std::io::Error>> + '_ {
         std::iter::from_fn(move || {
             let mut len_bytes = [0u8; 4];
             if self.reader.read_exact(&mut len_bytes).is_err() {
