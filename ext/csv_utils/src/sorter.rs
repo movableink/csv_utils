@@ -8,7 +8,6 @@ use std::{
     cell::RefCell,
     collections::BinaryHeap,
     fs::File,
-    hash::{Hash, Hasher},
     io::{self, BufReader, BufWriter, Read, Seek, SeekFrom, Write},
     path::Path,
 };
@@ -66,7 +65,6 @@ impl PartialOrd for SortRecord {
 
 #[derive(Encode, Decode, Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct KeyData {
-    pub hash: u64,
     pub value: [u8; 20],
     pub position: usize,
 }
@@ -74,8 +72,7 @@ pub struct KeyData {
 impl Ord for KeyData {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         // Compare: hash, value, reverse position
-        (self.hash, &self.value, std::cmp::Reverse(self.position)).cmp(&(
-            other.hash,
+        (&self.value, std::cmp::Reverse(self.position)).cmp(&(
             &other.value,
             std::cmp::Reverse(other.position),
         ))
@@ -102,12 +99,6 @@ impl SorterInner {
         }
 
         hasher.finalize().into()
-    }
-
-    fn hash_key(key: &[u8; 20]) -> u64 {
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        key.hash(&mut hasher);
-        hasher.finish()
     }
 
     fn estimate_row_size(row: &[String]) -> usize {
@@ -166,7 +157,6 @@ impl SorterInner {
 
         // Allocate a buffer for the key data of the size of the KeyData struct
         let mut key_bytes = bincode::encode_to_vec(&KeyData {
-            hash: 0,
             value: [0u8; 20],
             position: 0,
         }, bincode::config::legacy())
@@ -369,7 +359,6 @@ impl Sorter {
 
         let key_bytes = inner.generate_targeting_key(&row);
         let key = KeyData {
-            hash: SorterInner::hash_key(&key_bytes),
             value: key_bytes,
             position,
         };
