@@ -23,11 +23,11 @@ type RowItem = ([u8; 20], Option<Point>, Vec<String>);
 
 impl PostgresCopier {
     pub fn new(
-        input_file: &Path,
+        input_file: File,
         geo_indexes: Option<GeoIndexes>,
         source_key: String,
     ) -> Result<Self, std::io::Error> {
-        let reader = BufReader::with_capacity(BUFFER_CAPACITY, File::open(input_file)?);
+        let reader = BufReader::with_capacity(BUFFER_CAPACITY, input_file);
 
         Ok(Self {
             reader,

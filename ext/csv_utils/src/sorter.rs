@@ -8,10 +8,10 @@ use std::{
     cell::RefCell,
     collections::BinaryHeap,
     fs::File,
-    io::{self, BufReader, BufWriter, Read, Seek, SeekFrom, Write},
+    io::{self, BufReader, BufWriter, Read, Seek, Write},
     path::Path,
 };
-use tempfile::NamedTempFile;
+use tempfile::tempfile;
 
 const BUFFER_CAPACITY: usize = 4 * 1024 * 1024;
 const DEFAULT_MAX_TARGETING_KEY_ROWS: usize = 200;
@@ -29,10 +29,10 @@ struct SorterInner {
     geo_columns: Option<GeoIndexes>,
     current_batch: Vec<SortRecord>,
     buffer_size_bytes: usize,
-    temp_files: Vec<NamedTempFile>,
+    temp_files: Vec<File>,
     current_buffer_size: usize,
     // Store the actual output file directly
-    output_file: NamedTempFile,
+    output_file: File,
     total_rows: usize,
     observed_max_row_size: usize,
 
@@ -106,7 +106,7 @@ impl SorterInner {
         key_size + row_size
     }
 
-    fn make_run(&mut self) -> std::io::Result<Option<NamedTempFile>> {
+    fn make_run(&mut self) -> std::io::Result<Option<File>> {
         if self.current_batch.is_empty() {
             return Ok(None);
         }
@@ -114,7 +114,7 @@ impl SorterInner {
         // Sort in place before taking ownership
         self.current_batch.sort_unstable();
 
-        let temp = NamedTempFile::new()?;
+        let temp = tempfile()?;
         {
             let mut w = BufWriter::with_capacity(BUFFER_CAPACITY, &temp);
 
@@ -161,8 +161,7 @@ impl SorterInner {
 
         // Prepare readers with their first records
         let mut readers = Vec::with_capacity(self.temp_files.len());
-        for temp_file in &self.temp_files {
-            let file = File::open(temp_file.path())?;
+        for file in &self.temp_files {
             let mut reader = BufReader::with_capacity(BUFFER_CAPACITY, file);
 
             if reader.read_exact(&mut key_bytes).is_err() {
@@ -190,7 +189,7 @@ impl SorterInner {
         }
 
         // Prepare output file
-        self.output_file = NamedTempFile::new()?;
+        self.output_file.rewind()?;
         let mut writer = BufWriter::with_capacity(BUFFER_CAPACITY, &self.output_file);
         let mut count = 0;
 
@@ -247,7 +246,7 @@ impl SorterInner {
     }
 
     fn write_records(&mut self) -> io::Result<usize> {
-        self.output_file = NamedTempFile::new()?;
+        self.output_file.rewind()?;
         let mut w = BufWriter::with_capacity(BUFFER_CAPACITY, &self.output_file);
         let mut count = 0;
         for rec in self.current_batch.iter() {
@@ -309,15 +308,12 @@ impl Sorter {
 
         let geo_columns = geo_columns_vec.map(|indexes| (indexes[0], indexes[1]));
 
-        let output_file = match NamedTempFile::new() {
-            Ok(file) => file,
-            Err(e) => {
-                return Err(Error::new(
-                    magnus::exception::runtime_error(),
-                    format!("Failed to create output file: {}", e),
-                ));
-            }
-        };
+        let output_file = tempfile().map_err(|e| {
+            Error::new(
+                magnus::exception::runtime_error(),
+                format!("Failed to create output file: {}", e),
+            )
+        })?;
 
         Ok(Self {
             inner: RefCell::new(SorterInner {
@@ -504,6 +500,14 @@ impl Sorter {
                 Symbol::new("parse_error_count"),
                 validator.parse_error_count,
             )?;
+            result.aset(
+                Symbol::new("error_count"),
+                validator.failed_url_error_count
+                    + validator.failed_protocol_error_count
+                    + validator.parse_error_count,
+            )?;
+        } else {
+            result.aset(Symbol::new("error_count"), 0)?;
         }
 
         Ok(result)
@@ -515,12 +519,12 @@ impl Sorter {
         let block = ruby.block_proc()?;
         let mut inner = self.inner.borrow_mut();
 
-        if let Err(e) = inner.output_file.seek(SeekFrom::Start(0)) {
-            return Err(Error::new(
+        inner.output_file.rewind().map_err(|e| {
+            Error::new(
                 magnus::exception::runtime_error(),
                 format!("Error seeking in sorted file: {}", e),
-            ));
-        }
+            )
+        })?;
 
         let mut reader = BufReader::with_capacity(BUFFER_CAPACITY, &inner.output_file);
         let mut current_batch: RArray = RArray::new();
@@ -589,11 +593,24 @@ impl Sorter {
 
     pub fn write_binary_postgres_file(&self, file_path: String) -> Result<(), Error> {
         let inner = self.inner.borrow_mut();
-        let input_file_path = inner.output_file.path();
         let output_file_path = Path::new(&file_path);
 
+        // Input comes from previous step's output file
+        let mut input_file = inner.output_file.try_clone().map_err(|e| {
+            Error::new(
+                magnus::exception::runtime_error(),
+                format!("Failed to clone output file: {}", e),
+            )
+        })?;
+        input_file.rewind().map_err(|e| {
+            Error::new(
+                magnus::exception::runtime_error(),
+                format!("Failed to rewind input file: {}", e),
+            )
+        })?;
+
         let mut copier =
-            PostgresCopier::new(input_file_path, inner.geo_columns, inner.source_key.clone())
+            PostgresCopier::new(input_file, inner.geo_columns, inner.source_key.clone())
                 .map_err(|e| Error::new(magnus::exception::runtime_error(), e.to_string()))?;
 
         copier
