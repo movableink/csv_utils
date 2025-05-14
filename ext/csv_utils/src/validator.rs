@@ -55,6 +55,8 @@ pub struct Validator {
     pub failed_url_error_count: usize,
     pub failed_protocol_error_count: usize,
     pub parse_error_count: usize,
+    pub first_error_row: Option<usize>,
+    first_error_type: Option<ValidationType>,
 }
 
 impl Validator {
@@ -93,6 +95,8 @@ impl Validator {
             failed_url_error_count: 0,
             failed_protocol_error_count: 0,
             parse_error_count: 0,
+            first_error_row: None,
+            first_error_type: None,
         })
     }
 
@@ -103,6 +107,19 @@ impl Validator {
         column: usize,
         column_name: &str,
     ) -> Result<(), ValidationError> {
+        if self.failed_url_error_count > 5000
+            || self.failed_protocol_error_count > 5000
+            || self.parse_error_count > 5000
+        {
+            // Stop logging errors if we have too many
+            return Ok(());
+        }
+
+        if self.first_error_row.is_none() {
+            self.first_error_row = Some(row_number);
+            self.first_error_type = Some(ValidationType::from_string(error_type));
+        }
+
         if let Some(file) = &mut self.error_log_file {
             let message = match error_type {
                 "protocol" => format!("{} does not include a valid link protocol", column_name),
@@ -167,6 +184,23 @@ impl Validator {
         self.total_rows += 1;
 
         !failed_url && !failed_protocol
+    }
+
+    pub fn first_error_message(&self) -> Option<String> {
+        match self.first_error_type {
+            Some(ValidationType::Url) => Some(format!(
+                "Invalid image URL: {}",
+                self.first_error_row.unwrap()
+            )),
+            Some(ValidationType::Protocol) => {
+                Some(format!("Invalid link: {}", self.first_error_row.unwrap()))
+            }
+            Some(ValidationType::Invalid) => Some(format!(
+                "Error parsing row: {}",
+                self.first_error_row.unwrap() + 1
+            )),
+            _ => None,
+        }
     }
 }
 

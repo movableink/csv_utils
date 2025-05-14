@@ -412,7 +412,7 @@ impl Sorter {
                 Ok(false) => break, // End of file
                 Err(e) => {
                     if let Some(validator) = &mut self.inner.borrow_mut().validator {
-                        let _ = validator.add_error_to_file("parse", 0, 0, &e.to_string());
+                        let _ = validator.add_error_to_file("parse", position, 0, &e.to_string());
                         validator.parse_error_count += 1;
                     }
                     position += 1;
@@ -506,6 +506,12 @@ impl Sorter {
                     + validator.failed_protocol_error_count
                     + validator.parse_error_count,
             )?;
+            if let Some(first_error_row) = validator.first_error_row {
+                result.aset(Symbol::new("first_error_row"), first_error_row)?;
+            }
+            if let Some(message) = validator.first_error_message() {
+                result.aset(Symbol::new("first_error_message"), message)?;
+            }
         } else {
             result.aset(Symbol::new("error_count"), 0)?;
         }
