@@ -54,14 +54,13 @@ RSpec.describe CsvUtils::Sorter do
     expect(result[:total_rows]).to eq(7)
     expect(collect_rows(sorter)).to eq(
       [
-        %w[2 3 1],
         %w[3 1 2],
         %w[3 1 3],
         %w[3 2 1],
         %w[3 2 2],
         %w[1 3 2],
-        %w[1 2 3]
-
+        %w[1 2 3],
+        %w[2 3 1]
       ]
     )
   end
@@ -92,10 +91,10 @@ RSpec.describe CsvUtils::Sorter do
     count = 0
     sorter.each_batch(10) do |batch|
       expect(batch).to eq([
-                            ["b85e2d4914e22b5ad3b82b312b3dc405dc17dcb8", %w[2 3 1]],
                             ["0d1a3778431c4f1daffc613e793225ca2fee71c4", %w[3 1 3]],
                             ["3c9db9ba838cbefabdbd7ce6c6ca549d3f0e6743", %w[1 3 2]],
-                            ["6ea87ee6f25f25d1e14c442a890eda7c722bca7a", %w[1 2 3]]
+                            ["6ea87ee6f25f25d1e14c442a890eda7c722bca7a", %w[1 2 3]],
+                            ["b85e2d4914e22b5ad3b82b312b3dc405dc17dcb8", %w[2 3 1]]
                           ])
       count += 1
     end
