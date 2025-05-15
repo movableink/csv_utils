@@ -162,6 +162,10 @@ impl SorterInner {
         // Prepare readers with their first records
         let mut readers = Vec::with_capacity(self.temp_files.len());
         for file in &self.temp_files {
+            let mut file = file
+                .try_clone()
+                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            file.rewind()?;
             let mut reader = BufReader::with_capacity(BUFFER_CAPACITY, file);
 
             if reader.read_exact(&mut key_bytes).is_err() {
