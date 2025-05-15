@@ -8,6 +8,7 @@ use std::fmt;
 use std::fs::File;
 use std::io::Write;
 use url::Url;
+use log::{debug, error, info, warn};
 
 #[derive(Debug)]
 pub struct ValidationError {
@@ -64,24 +65,54 @@ impl Validator {
         rules: Vec<ValidationRule>,
         error_log_path: String,
     ) -> Result<Self, ValidationError> {
+        info!(
+            target: "csv_utils::validator",
+            "Creating validator with {} rules, error log: {}", 
+            rules.len(), error_log_path
+        );
+        
+        for (i, rule) in rules.iter().enumerate() {
+            debug!(
+                target: "csv_utils::validator",
+                "Rule {}: column '{}', type: {:?}", 
+                i, rule.column_name, rule.validation_type
+            );
+        }
+        
         // Create error log file with BOM
         let error_log_file = match File::create(&error_log_path) {
             Ok(mut file) => {
                 // Write UTF-8 BOM
                 if let Err(e) = file.write_all(b"\xEF\xBB\xBF") {
+                    error!(
+                        target: "csv_utils::validator",
+                        "Failed to write BOM: {}", e
+                    );
                     return Err(ValidationError {
                         message: format!("Failed to write BOM: {}", e),
                     });
                 }
                 // Write header
                 if let Err(e) = writeln!(file, "Error Message,Row,Column") {
+                    error!(
+                        target: "csv_utils::validator",
+                        "Failed to write header: {}", e
+                    );
                     return Err(ValidationError {
                         message: format!("Failed to write header: {}", e),
                     });
                 }
+                debug!(
+                    target: "csv_utils::validator",
+                    "Created error log file: {}", error_log_path
+                );
                 Some(file)
             }
             Err(e) => {
+                error!(
+                    target: "csv_utils::validator",
+                    "Failed to create error log file: {}", e
+                );
                 return Err(ValidationError {
                     message: format!("Failed to create error log file: {}", e),
                 })
@@ -112,12 +143,24 @@ impl Validator {
             || self.parse_error_count > 5000
         {
             // Stop logging errors if we have too many
+            if self.failed_url_error_count == 5001 || 
+               self.failed_protocol_error_count == 5001 || 
+               self.parse_error_count == 5001 {
+                info!(
+                    target: "csv_utils::validator",
+                    "Error count threshold reached, stopping detailed error logging"
+                );
+            }
             return Ok(());
         }
 
         if self.first_error_row.is_none() {
             self.first_error_row = Some(row_number);
             self.first_error_type = Some(ValidationType::from_string(error_type));
+            info!(
+                target: "csv_utils::validator",
+                "First error detected: type={}, row={}", error_type, row_number
+            );
         }
 
         if let Some(file) = &mut self.error_log_file {
@@ -125,13 +168,26 @@ impl Validator {
                 "protocol" => format!("{} does not include a valid link protocol", column_name),
                 "url" => format!("{} does not include a valid domain", column_name),
                 _ => {
+                    error!(
+                        target: "csv_utils::validator",
+                        "Unknown error type: {}", error_type
+                    );
                     return Err(ValidationError {
                         message: format!("Unknown error type: {}", error_type),
                     })
                 }
             };
 
+            debug!(
+                target: "csv_utils::validator",
+                "Logging error: {} (row {}, column {})", message, row_number + 1, column + 1
+            );
+
             if let Err(e) = writeln!(file, "{},{},{}", message, row_number + 1, column + 1) {
+                error!(
+                    target: "csv_utils::validator",
+                    "Failed to write error to log: {}", e
+                );
                 return Err(ValidationError {
                     message: format!("Failed to write error to log: {}", e),
                 });
@@ -153,12 +209,22 @@ impl Validator {
                 ValidationType::Ignore => continue,
                 ValidationType::Url => {
                     if !field.is_empty() && Url::parse(field).is_err() {
+                        debug!(
+                            target: "csv_utils::validator",
+                            "URL validation failed for column {} value: {}", 
+                            rule.column_name, field
+                        );
                         failed_url = true;
                         errors_to_log.push(("url", col_idx, rule.column_name.clone()));
                     }
                 }
                 ValidationType::Protocol => {
                     if !field.is_empty() && !field.contains("://") {
+                        debug!(
+                            target: "csv_utils::validator",
+                            "Protocol validation failed for column {} value: {}", 
+                            rule.column_name, field
+                        );
                         failed_protocol = true;
                         errors_to_log.push(("protocol", col_idx, rule.column_name.clone()));
                     }
@@ -169,6 +235,10 @@ impl Validator {
         // Log all errors after validation is complete
         for (error_type, col_idx, value) in errors_to_log {
             if let Err(e) = self.add_error_to_file(error_type, self.total_rows, col_idx, &value) {
+                error!(
+                    target: "csv_utils::validator",
+                    "Failed to log {} validation error: {}", error_type, e
+                );
                 eprintln!("Failed to log {} validation error: {}", error_type, e);
             }
         }
@@ -182,6 +252,17 @@ impl Validator {
         }
 
         self.total_rows += 1;
+
+        if self.total_rows % 10000 == 0 {
+            info!(
+                target: "csv_utils::validator",
+                "Processed {} rows (URL errors: {}, protocol errors: {}, parse errors: {})",
+                self.total_rows,
+                self.failed_url_error_count,
+                self.failed_protocol_error_count,
+                self.parse_error_count
+            );
+        }
 
         !failed_url && !failed_protocol
     }
@@ -204,6 +285,13 @@ impl Validator {
     }
 
     pub fn status(&self) -> Result<RHash, Error> {
+        info!(
+            target: "csv_utils::validator",
+            "Validation completed: {} rows processed, {} errors found",
+            self.total_rows,
+            self.failed_url_error_count + self.failed_protocol_error_count + self.parse_error_count
+        );
+        
         let status = RHash::new();
         status.aset(Symbol::new("total_rows_processed"), self.total_rows)?;
         status.aset(
@@ -231,6 +319,11 @@ impl Validator {
 }
 
 pub fn ruby_rules_array_to_rules(rules: RArray) -> Result<Vec<ValidationRule>, Error> {
+    info!(
+        target: "csv_utils::validator",
+        "Converting Ruby rules array with {} elements", rules.len()
+    );
+    
     let validation_type_key = Symbol::new("validation_type");
     let column_name_key = Symbol::new("column_name");
     rules
@@ -239,19 +332,43 @@ pub fn ruby_rules_array_to_rules(rules: RArray) -> Result<Vec<ValidationRule>, E
             let rule = RHash::try_convert(rule)?;
             let column_name = rule
                 .aref::<Symbol, Value>(column_name_key)
-                .map_err(|_| Error::new(arg_error(), "Missing column_name"))?
+                .map_err(|_| {
+                    error!(
+                        target: "csv_utils::validator",
+                        "Missing column_name in rule"
+                    );
+                    Error::new(arg_error(), "Missing column_name")
+                })?
                 .to_string();
             let validation_type_str = rule
                 .aref::<Symbol, Value>(validation_type_key)
-                .map_err(|_| Error::new(arg_error(), "Missing validation_type"))?
+                .map_err(|_| {
+                    error!(
+                        target: "csv_utils::validator",
+                        "Missing validation_type in rule"
+                    );
+                    Error::new(arg_error(), "Missing validation_type")
+                })?
                 .to_string();
 
             match ValidationType::from_string(validation_type_str.as_str()) {
-                ValidationType::Invalid => Err(Error::new(arg_error(), "Invalid validation type")),
-                validation_type => Ok(ValidationRule {
-                    column_name,
-                    validation_type,
-                }),
+                ValidationType::Invalid => {
+                    error!(
+                        target: "csv_utils::validator",
+                        "Invalid validation type: {}", validation_type_str
+                    );
+                    Err(Error::new(arg_error(), "Invalid validation type"))
+                },
+                validation_type => {
+                    debug!(
+                        target: "csv_utils::validator",
+                        "Created rule for column '{}' with type '{:?}'", column_name, validation_type
+                    );
+                    Ok(ValidationRule {
+                        column_name,
+                        validation_type,
+                    })
+                },
             }
         })
         .collect()
@@ -264,10 +381,16 @@ pub struct ValidatorWrapper {
 
 impl ValidatorWrapper {
     pub fn new_from_ruby(schema: RArray, error_log_path: String) -> Result<Self, Error> {
+        info!(
+            target: "csv_utils::validator",
+            "Creating new validator wrapper with error log: {}", error_log_path
+        );
+        
         let rules = ruby_rules_array_to_rules(schema)?;
 
         let validator = Validator::new(rules, error_log_path)
             .map_err(|e| Error::new(arg_error(), e.to_string()))?;
+            
         Ok(Self {
             validator: RefCell::new(validator),
         })

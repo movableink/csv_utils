@@ -1,6 +1,8 @@
 use crate::postgres_copier::{GeoIndexes, PostgresCopier};
 use crate::validator::{ruby_rules_array_to_rules, Validator};
 use bincode::{Decode, Encode};
+use faster_hex::hex_string;
+use log::{debug, error, info, trace, warn};
 use magnus::{function, method, prelude::*, Error, RArray, RHash, RModule, Ruby, Symbol, Value};
 use serde::{Deserialize, Serialize};
 use sha1::{Digest, Sha1};
@@ -110,6 +112,8 @@ impl SorterInner {
         if self.current_batch.is_empty() {
             return Ok(None);
         }
+
+        debug!(target: "csv_utils::sorter", "Making run with {} records", self.current_batch.len());
 
         // Sort in place before taking ownership
         self.current_batch.sort_unstable();
@@ -319,6 +323,8 @@ impl Sorter {
             )
         })?;
 
+        info!(target: "csv_utils::sorter", "Creating new sorter for source: {}", source_id);
+
         Ok(Self {
             inner: RefCell::new(SorterInner {
                 source_id,
@@ -343,6 +349,9 @@ impl Sorter {
         let mut inner = self.inner.borrow_mut();
         let rules = ruby_rules_array_to_rules(schema)
             .map_err(|e| Error::new(magnus::exception::arg_error(), e.to_string()))?;
+
+        info!(target: "csv_utils::sorter", "Validation enabled with error log: {}", error_log_path);
+
         inner.validator = Some(
             Validator::new(rules, error_log_path)
                 .map_err(|e| Error::new(magnus::exception::arg_error(), e.to_string()))?,
@@ -369,15 +378,29 @@ impl Sorter {
             let actual_row_data_size = inner.current_batch_size();
             inner.observed_max_row_size = inner.observed_max_row_size.max(actual_row_data_size);
 
+            debug!(
+                target: "csv_utils::sorter",
+                "Buffer full ({}/{} bytes), creating run file with {} records",
+                inner.current_buffer_size,
+                inner.buffer_size_bytes,
+                inner.current_batch.len()
+            );
+
             // Create a new run file from current batch
             match inner.make_run() {
                 Ok(Some(run_file)) => {
                     inner.temp_files.push(run_file);
+                    info!(
+                        target: "csv_utils::sorter",
+                        "Created run file #{}",
+                        inner.temp_files.len()
+                    );
                 }
                 Ok(None) => {
                     // No records to process, this is fine
                 }
                 Err(e) => {
+                    error!(target: "csv_utils::sorter", "Error creating run file: {}", e);
                     eprintln!("Error creating run file: {}", e);
                 }
             }
@@ -392,12 +415,22 @@ impl Sorter {
         inner.current_batch.push(SortRecord { key, record: row });
         inner.current_buffer_size += row_size;
 
+        trace!(
+            target: "csv_utils::sorter",
+            "Added row {} (buffer now: {}/{})",
+            position,
+            inner.current_buffer_size,
+            inner.buffer_size_bytes
+        );
+
         true
     }
 
     pub fn add_file(&self, file_path: String) -> Result<(), Error> {
+        info!(target: "csv_utils::sorter", "Adding file: {}", file_path);
+
         // parse csv file, skipping headers
-        let file = File::open(file_path)
+        let file = File::open(&file_path)
             .map_err(|e| Error::new(magnus::exception::runtime_error(), e.to_string()))?;
         let mut reader = csv::Reader::from_reader(file);
         // Allocate a buffer for the record
@@ -419,12 +452,14 @@ impl Sorter {
                         let _ = validator.add_error_to_file("parse", position, 0, &e.to_string());
                         validator.parse_error_count += 1;
                     }
+                    warn!(target: "csv_utils::sorter", "Error parsing row {}: {}", position, e);
                     position += 1;
                     // Continue processing other records
                 }
             }
         }
 
+        info!(target: "csv_utils::sorter", "Finished processing file: {}, read {} rows", file_path, position);
         Ok(())
     }
 
@@ -433,6 +468,13 @@ impl Sorter {
         let mut inner = self.inner.borrow_mut();
         let temp_file_count = inner.temp_files.len();
 
+        info!(
+            target: "csv_utils::sorter",
+            "Starting sort with {} temp files and {} records in buffer",
+            temp_file_count,
+            inner.current_batch.len()
+        );
+
         let actual_row_data_size = inner.current_batch_size();
         inner.observed_max_row_size = inner.observed_max_row_size.max(actual_row_data_size);
 
@@ -440,10 +482,16 @@ impl Sorter {
         let total_rows = if inner.temp_files.is_empty() && !inner.current_batch.is_empty() {
             match inner.sort_in_memory_to_file() {
                 Ok(count) => {
+                    info!(
+                        target: "csv_utils::sorter",
+                        "Sorted {} records in memory",
+                        count
+                    );
                     inner.total_rows = count;
                     count
                 }
                 Err(e) => {
+                    error!(target: "csv_utils::sorter", "Error sorting data: {}", e);
                     return Err(Error::new(
                         magnus::exception::runtime_error(),
                         format!("Error sorting data: {}", e),
@@ -454,6 +502,11 @@ impl Sorter {
             // Otherwise we need to create a run from any remaining records
             // and merge all runs
             if !inner.current_batch.is_empty() {
+                debug!(
+                    target: "csv_utils::sorter",
+                    "Creating final run from remaining {} records",
+                    inner.current_batch.len()
+                );
                 match inner.make_run() {
                     Ok(Some(run_file)) => {
                         inner.temp_files.push(run_file);
@@ -462,18 +515,31 @@ impl Sorter {
                         // No records to process, this is fine
                     }
                     Err(e) => {
+                        error!(target: "csv_utils::sorter", "Error creating run file: {}", e);
                         eprintln!("Error creating run file: {}", e);
                     }
                 }
             }
 
             // Merge all runs to a final file
+            info!(
+                target: "csv_utils::sorter",
+                "Merging {} run files",
+                inner.temp_files.len()
+            );
             match inner.merge_runs_to_file() {
                 Ok(count) => {
+                    info!(
+                        target: "csv_utils::sorter",
+                        "Merged {} records from {} run files",
+                        count,
+                        temp_file_count
+                    );
                     inner.total_rows = count;
                     count
                 }
                 Err(e) => {
+                    error!(target: "csv_utils::sorter", "Error merging data: {}", e);
                     return Err(Error::new(
                         magnus::exception::runtime_error(),
                         format!("Error merging data: {}", e),
@@ -508,6 +574,12 @@ impl Sorter {
         let block = ruby.block_proc()?;
         let mut inner = self.inner.borrow_mut();
 
+        info!(
+            target: "csv_utils::sorter",
+            "Starting batch iteration with batch size {}",
+            batch_size
+        );
+
         inner.output_file.rewind().map_err(|e| {
             Error::new(
                 magnus::exception::runtime_error(),
@@ -519,6 +591,8 @@ impl Sorter {
         let mut current_batch: RArray = RArray::new();
         let mut last_key = [0u8; 20];
         let mut run_length = 0;
+        let mut total_processed = 0;
+        let mut batch_count = 0;
 
         loop {
             let mut len_bytes = [0u8; 4];
@@ -547,35 +621,61 @@ impl Sorter {
             if run_length > inner.max_targeting_key_rows {
                 // We will never serve more than MAX_RUN_LENGTH rows for a given key, so
                 // may as well not emit them
+                debug!(
+                    target: "csv_utils::sorter",
+                    "Skipping record with key {} (hit max run length {})",
+                    std::str::from_utf8(&target_key).unwrap_or("<invalid utf8>"),
+                    inner.max_targeting_key_rows
+                );
                 continue;
             }
 
             // If the batch is full, complete the target_key run and then start a new batch
             if current_batch.len() >= batch_size && target_key != last_key {
+                debug!(
+                    target: "csv_utils::sorter",
+                    "Yielding batch {} with {} records",
+                    batch_count,
+                    current_batch.len()
+                );
+
                 let args = RArray::new();
                 let _ = args.push(current_batch);
                 block.call::<_, Value>(args)?;
                 current_batch = RArray::new();
+                batch_count += 1;
             }
 
             last_key = target_key;
 
             let item = RArray::new();
-            let key_hex = target_key
-                .iter()
-                .map(|b| format!("{:02x}", b))
-                .collect::<String>();
+            let key_hex = hex_string(&target_key);
             let _ = item.push(key_hex);
             let _ = item.push(record.record);
             let _ = current_batch.push(item);
+            total_processed += 1;
         }
 
         // Yield any remaining records
         if !current_batch.is_empty() {
+            debug!(
+                target: "csv_utils::sorter",
+                "Yielding final batch with {} records",
+                current_batch.len()
+            );
+
             let args = RArray::new();
             let _ = args.push(current_batch);
             block.call::<_, Value>(args)?;
+            batch_count += 1;
         }
+
+        info!(
+            target: "csv_utils::sorter",
+            "Finished batch iteration: yielded {} batches with {} total records",
+            batch_count,
+            total_processed
+        );
 
         Ok(())
     }
@@ -583,6 +683,12 @@ impl Sorter {
     pub fn write_binary_postgres_file(&self, file_path: String) -> Result<(), Error> {
         let inner = self.inner.borrow_mut();
         let output_file_path = Path::new(&file_path);
+
+        info!(
+            target: "csv_utils::sorter",
+            "Writing binary PostgreSQL file to {}",
+            file_path
+        );
 
         // Input comes from previous step's output file
         let mut input_file = inner.output_file.try_clone().map_err(|e| {
@@ -602,9 +708,21 @@ impl Sorter {
             PostgresCopier::new(input_file, inner.geo_columns, inner.source_key.clone())
                 .map_err(|e| Error::new(magnus::exception::runtime_error(), e.to_string()))?;
 
+        debug!(
+            target: "csv_utils::sorter",
+            "Created PostgreSQL copier for source key: {}",
+            inner.source_key
+        );
+
         copier
             .copy(output_file_path)
             .map_err(|e| Error::new(magnus::exception::runtime_error(), e.to_string()))?;
+
+        info!(
+            target: "csv_utils::sorter",
+            "Successfully wrote PostgreSQL binary format file to {}",
+            file_path
+        );
 
         Ok(())
     }
