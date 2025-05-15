@@ -16,7 +16,7 @@ RSpec.describe CsvUtils::Validator do
                                           ], error_log_path)
       expect(validator.validate_row(["https://example.com", "test.com"])).to eq(false)
       expect(validator.validate_row(["https://example2.com", "test2.com"])).to eq(false)
-      expect(validator.status[:total_rows]).to eq(2)
+      expect(validator.status[:total_rows_processed]).to eq(2)
       expect(validator.status[:failed_url_error_count]).to eq(2)
       expect(validator.status[:failed_protocol_error_count]).to eq(0)
     end
@@ -42,7 +42,7 @@ RSpec.describe CsvUtils::Validator do
 
       expect(File.read(error_log_path)).to include("Error Message,Row,Column\n")
 
-      expect(validator.status[:total_rows]).to eq(1)
+      expect(validator.status[:total_rows_processed]).to eq(1)
       expect(validator.status[:failed_url_error_count]).to eq(0)
       expect(validator.status[:failed_protocol_error_count]).to eq(0)
     end
@@ -66,7 +66,7 @@ RSpec.describe CsvUtils::Validator do
       expect(File.exist?(error_log_path)).to eq(true)
       expect(File.read(error_log_path)).to include("url does not include a valid domain,1,1\n")
 
-      expect(validator.status[:total_rows]).to eq(1)
+      expect(validator.status[:total_rows_processed]).to eq(1)
       expect(validator.status[:failed_url_error_count]).to eq(1)
       expect(validator.status[:failed_protocol_error_count]).to eq(0)
     end
@@ -93,7 +93,7 @@ RSpec.describe CsvUtils::Validator do
       validator = CsvUtils::Validator.new(pattern, error_log_path)
       expect(validator.validate_row(data)).to eq(true)
 
-      expect(validator.status[:total_rows]).to eq(1)
+      expect(validator.status[:total_rows_processed]).to eq(1)
       expect(validator.status[:failed_url_error_count]).to eq(0)
       expect(validator.status[:failed_protocol_error_count]).to eq(0)
     end
@@ -119,7 +119,7 @@ RSpec.describe CsvUtils::Validator do
       expect(File.exist?(error_log_path)).to eq(true)
       expect(File.read(error_log_path)).to include("url does not include a valid link protocol,1,2\n")
 
-      expect(validator.status[:total_rows]).to eq(1)
+      expect(validator.status[:total_rows_processed]).to eq(1)
       expect(validator.status[:failed_url_error_count]).to eq(0)
       expect(validator.status[:failed_protocol_error_count]).to eq(1)
     end
@@ -140,7 +140,7 @@ RSpec.describe CsvUtils::Validator do
       validator = CsvUtils::Validator.new(pattern, error_log_path)
       expect(validator.validate_row(data)).to eq(true)
 
-      expect(validator.status[:total_rows]).to eq(1)
+      expect(validator.status[:total_rows_processed]).to eq(1)
       expect(validator.status[:failed_url_error_count]).to eq(0)
       expect(validator.status[:failed_protocol_error_count]).to eq(0)
     end
@@ -167,7 +167,7 @@ RSpec.describe CsvUtils::Validator do
       validator = CsvUtils::Validator.new(pattern, error_log_path)
       validator.validate_row(data)
 
-      expect(validator.status[:total_rows]).to eq(1)
+      expect(validator.status[:total_rows_processed]).to eq(1)
       expect(validator.status[:failed_url_error_count]).to eq(0)
       expect(validator.status[:failed_protocol_error_count]).to eq(0)
     end
@@ -195,7 +195,7 @@ RSpec.describe CsvUtils::Validator do
       expect(File.exist?(error_log_path)).to eq(true)
       expect(File.read(error_log_path)).to include("url2 does not include a valid domain,1,2\nurl3 does not include a valid link protocol,1,4\n")
 
-      expect(validator.status[:total_rows]).to eq(1)
+      expect(validator.status[:total_rows_processed]).to eq(1)
       expect(validator.status[:failed_url_error_count]).to eq(1)
       expect(validator.status[:failed_protocol_error_count]).to eq(1)
     end

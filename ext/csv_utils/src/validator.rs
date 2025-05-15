@@ -202,6 +202,32 @@ impl Validator {
             _ => None,
         }
     }
+
+    pub fn status(&self) -> Result<RHash, Error> {
+        let status = RHash::new();
+        status.aset(Symbol::new("total_rows_processed"), self.total_rows)?;
+        status.aset(
+            Symbol::new("failed_url_error_count"),
+            self.failed_url_error_count,
+        )?;
+        status.aset(
+            Symbol::new("failed_protocol_error_count"),
+            self.failed_protocol_error_count,
+        )?;
+        status.aset(Symbol::new("parse_error_count"), self.parse_error_count)?;
+        status.aset(
+            Symbol::new("error_count"),
+            self.failed_url_error_count + self.failed_protocol_error_count + self.parse_error_count,
+        )?;
+        if let Some(first_error_row) = self.first_error_row {
+            status.aset(Symbol::new("first_error_row"), first_error_row)?;
+        }
+        if let Some(message) = self.first_error_message() {
+            status.aset(Symbol::new("first_error_message"), message)?;
+        }
+
+        Ok(status)
+    }
 }
 
 pub fn ruby_rules_array_to_rules(rules: RArray) -> Result<Vec<ValidationRule>, Error> {
@@ -253,20 +279,7 @@ impl ValidatorWrapper {
     }
 
     pub fn status(&self) -> Result<RHash, Error> {
-        let validator = self.validator.borrow();
-        let status = RHash::new();
-
-        let _ = status.aset(Symbol::new("total_rows"), validator.total_rows);
-        let _ = status.aset(
-            Symbol::new("failed_url_error_count"),
-            validator.failed_url_error_count,
-        );
-        let _ = status.aset(
-            Symbol::new("failed_protocol_error_count"),
-            validator.failed_protocol_error_count,
-        );
-
-        Ok(status)
+        self.validator.borrow_mut().status()
     }
 }
 

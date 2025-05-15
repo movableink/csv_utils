@@ -41,6 +41,24 @@ RSpec.describe CsvUtils::Sorter do
     expect(collect_rows(sorter)).to eq([%w[1 2 3], %w[4 5 6]])
   end
 
+  it "should accept a file" do
+    csv_data = <<~CSV
+      id,name,age
+      1,John,25
+      2,Jane,30
+      3,Jim,35
+    CSV
+    file = Tempfile.new
+    file.write(csv_data)
+    file.rewind
+
+    sorter = CsvUtils::Sorter.new(source_id, source_key, [0], nil, 100)
+    sorter.add_file(file.path)
+    result = sorter.sort!
+    expect(result[:total_rows]).to eq(3)
+    expect(collect_rows(sorter)).to eq([%w[3 Jim 35], %w[2 Jane 30], %w[1 John 25]])
+  end
+
   it "sorts a CSV file with compound keys" do
     sorter = CsvUtils::Sorter.new(source_id, source_key, [0, 1], nil, 100)
     sorter.add_row(%w[1 2 3], 0)
@@ -108,8 +126,8 @@ RSpec.describe CsvUtils::Sorter do
     sorter.add_row(["test.com"], 1)
 
     result = sorter.sort!
-    expect(result[:failed_url_error_count]).to eq(1)
-    expect(result[:total_rows_processed]).to eq(2)
+    expect(result[:validation][:failed_url_error_count]).to eq(1)
+    expect(result[:validation][:total_rows_processed]).to eq(2)
     expect(result[:total_rows]).to eq(1)
 
     expect(File.read(error_log_path)).to include("my_url does not include a valid domain,2,1")

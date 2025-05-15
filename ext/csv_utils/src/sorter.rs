@@ -491,33 +491,12 @@ impl Sorter {
         )?;
 
         if let Some(validator) = &inner.validator {
-            result.aset(Symbol::new("total_rows_processed"), validator.total_rows)?;
-            result.aset(
-                Symbol::new("failed_url_error_count"),
-                validator.failed_url_error_count,
-            )?;
-            result.aset(
-                Symbol::new("failed_protocol_error_count"),
-                validator.failed_protocol_error_count,
-            )?;
-            result.aset(
-                Symbol::new("parse_error_count"),
-                validator.parse_error_count,
-            )?;
-            result.aset(
-                Symbol::new("error_count"),
-                validator.failed_url_error_count
-                    + validator.failed_protocol_error_count
-                    + validator.parse_error_count,
-            )?;
-            if let Some(first_error_row) = validator.first_error_row {
-                result.aset(Symbol::new("first_error_row"), first_error_row)?;
-            }
-            if let Some(message) = validator.first_error_message() {
-                result.aset(Symbol::new("first_error_message"), message)?;
-            }
+            let status = validator.status()?;
+            result.aset(Symbol::new("validation"), status)?;
         } else {
-            result.aset(Symbol::new("error_count"), 0)?;
+            let validation = RHash::new();
+            validation.aset(Symbol::new("error_count"), 0)?;
+            result.aset(Symbol::new("validation"), validation)?;
         }
 
         Ok(result)
