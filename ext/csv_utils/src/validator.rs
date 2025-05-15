@@ -8,7 +8,7 @@ use std::fmt;
 use std::fs::File;
 use std::io::Write;
 use url::Url;
-use log::{debug, error, info, warn};
+use log::{debug, error, info};
 
 #[derive(Debug)]
 pub struct ValidationError {
@@ -167,6 +167,7 @@ impl Validator {
             let message = match error_type {
                 "protocol" => format!("{} does not include a valid link protocol", column_name),
                 "url" => format!("{} does not include a valid domain", column_name),
+                "parse" => format!("{} could not be parsed", column_name),
                 _ => {
                     error!(
                         target: "csv_utils::validator",
