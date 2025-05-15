@@ -407,7 +407,7 @@ impl Sorter {
         }
 
         if let Some(validator) = &mut inner.validator {
-            if validator.validate_row(&row) {
+            if !validator.validate_row(&row) {
                 return false;
             }
         }

@@ -131,6 +131,9 @@ RSpec.describe CsvUtils::Sorter do
     expect(result[:total_rows]).to eq(1)
 
     expect(File.read(error_log_path)).to include("my_url does not include a valid domain,2,1")
+
+    rows = collect_rows(sorter)
+    expect(rows.size).to eq(1)
   end
 
   describe "writing a binary postgres file" do
