@@ -79,6 +79,7 @@ result = sorter.sort!
 sort_time = Time.now - start_time
 puts "Sorting time: #{sort_time} seconds"
 puts "Total rows: #{result[:total_rows]}"
+puts "Result: #{result.inspect}"
 
 # Write the output file
 puts "Writing output to: #{output_file}"
